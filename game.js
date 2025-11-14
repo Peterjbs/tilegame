@@ -151,7 +151,6 @@ const utils = {
 };
 
 // Initialize the game when DOM is ready
-let game;
 document.addEventListener('DOMContentLoaded', () => {
-    game = new TileGame();
+    window.game = new TileGame();
 });

@@ -86,7 +86,8 @@ class PuzzleGame {
 
         // For 4x4 puzzle, it's solvable if inversions + empty row (from bottom) is even
         const emptyRow = Math.floor(arr.indexOf(0) / this.size);
-        return (inversions + (this.size - emptyRow)) % 2 === 0;
+        const emptyRowFromBottom = this.size - emptyRow;
+        return (inversions + emptyRowFromBottom) % 2 === 0;
     }
 
     setupEventListeners() {
