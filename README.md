@@ -38,10 +38,19 @@ tilegame/
 
 ### Adding Your Own Music
 
+**Important**: You need to add your own MP3 file to play the game with audio!
+
 To use your own music:
-1. Place an MP3 file in the `assets/` folder
-2. Name it `demo-song.mp3`, or
-3. Update the `<audio>` tag in `music-video-maker.html` to point to your file
+1. Find or create an MP3 file (30-90 seconds recommended)
+2. Place it in the `assets/` folder
+3. Name it `demo-song.mp3`, or update the `<audio>` tag in `music-video-maker.html` to point to your file
+
+You can get royalty-free music from:
+- [FreeMusicArchive](https://freemusicarchive.org/)
+- [Incompetech](https://incompetech.com/)
+- [YouTube Audio Library](https://www.youtube.com/audiolibrary)
+
+**Note**: The game will load without audio, but you won't hear music during gameplay until you add an MP3 file.
 
 ### Features
 
