@@ -7,10 +7,11 @@ const gameState = {
     maxTimeBehind: 10, // Lose if more than 10 seconds behind
     score: 0,
     placedClips: [],
-    isGameOver: false
+    isGameOver: false,
+    filterDuration: 'all' // New filter state
 };
 
-// Clip data - 20-30 clips with different durations
+// Clip data - 50 clips with different durations
 const clipLibrary = [];
 const clipDurations = [1, 2, 3, 4, 5];
 const clipThemes = ['🎸', '🎹', '🎤', '🎧', '🎵', '🎶', '🎼', '🎺', '🎻', '🥁', 
@@ -18,17 +19,21 @@ const clipThemes = ['🎸', '🎹', '🎤', '🎧', '🎵', '🎶', '🎼', '�
 
 // Initialize clip library
 function initializeClipLibrary() {
-    for (let i = 0; i < 30; i++) {
-        const duration = clipDurations[Math.floor(Math.random() * clipDurations.length)];
-        const theme = clipThemes[Math.floor(Math.random() * clipThemes.length)];
-        clipLibrary.push({
-            id: `clip-${i}`,
-            name: `Clip ${i + 1}`,
-            duration: duration,
-            theme: theme,
-            used: false
-        });
+    // Create 10 clips for each duration
+    for (let duration of clipDurations) {
+        for (let i = 0; i < 10; i++) {
+            const theme = clipThemes[Math.floor(Math.random() * clipThemes.length)];
+            clipLibrary.push({
+                id: `clip-${duration}s-${i}`,
+                duration: duration,
+                theme: theme,
+                used: false
+            });
+        }
     }
+    
+    // Sort by duration (ascending)
+    clipLibrary.sort((a, b) => a.duration - b.duration);
 }
 
 // DOM Elements
@@ -70,6 +75,19 @@ function setupEventListeners() {
     pauseBtn.addEventListener('click', pauseGame);
     resetBtn.addEventListener('click', resetGame);
     restartBtn.addEventListener('click', resetGame);
+    
+    // Filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            // Update active state
+            document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+            e.target.classList.add('active');
+            
+            // Set filter
+            gameState.filterDuration = e.target.dataset.duration;
+            renderClipLibrary();
+        });
+    });
     
     // Update duration when audio metadata is loaded
     audioPlayer.addEventListener('loadedmetadata', () => {
@@ -269,12 +287,16 @@ function formatTime(seconds) {
 function renderClipLibrary() {
     clipLibraryElement.innerHTML = '';
     
-    clipLibrary.forEach(clip => {
+    // Filter clips based on selected duration
+    const filteredClips = gameState.filterDuration === 'all' 
+        ? clipLibrary 
+        : clipLibrary.filter(clip => clip.duration === parseInt(gameState.filterDuration));
+    
+    filteredClips.forEach(clip => {
         const clipElement = document.createElement('div');
         clipElement.className = `clip-item ${clip.used ? 'used' : ''}`;
         clipElement.innerHTML = `
             <div class="clip-thumbnail">${clip.theme}</div>
-            <div class="clip-name">${clip.name}</div>
             <div class="clip-length">${clip.duration}s</div>
         `;
         
@@ -297,7 +319,6 @@ function addClipToTimeline(clip) {
     // Add to placed clips
     const placedClip = {
         id: clip.id,
-        name: clip.name,
         duration: clip.duration,
         theme: clip.theme,
         startTime: startTime
