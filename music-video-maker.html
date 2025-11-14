@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Video Maker Game</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="game-container">
+        <header>
+            <h1>🎵 Music Video Maker Game 🎬</h1>
+            <div class="game-stats">
+                <div class="stat">
+                    <span class="stat-label">Time Behind:</span>
+                    <span id="timeBehind" class="stat-value">0.0s</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Timeline Coverage:</span>
+                    <span id="coverage" class="stat-value">0%</span>
+                </div>
+                <div class="stat">
+                    <span class="stat-label">Score:</span>
+                    <span id="score" class="stat-value">0</span>
+                </div>
+            </div>
+        </header>
+
+        <main>
+            <!-- Audio Player Section -->
+            <section class="audio-section">
+                <h2>Audio Track</h2>
+                <div class="file-upload-controls">
+                    <label for="audioFileInput" class="btn btn-upload">📁 Choose Song</label>
+                    <input type="file" id="audioFileInput" accept="audio/*" style="display: none;">
+                    <span id="audioFileName" class="file-name">No file selected</span>
+                </div>
+                <div class="audio-controls">
+                    <button id="startBtn" class="btn btn-primary">Start Game</button>
+                    <button id="pauseBtn" class="btn btn-secondary" disabled>Pause</button>
+                    <button id="resetBtn" class="btn btn-secondary">Reset</button>
+                </div>
+                <div class="progress-container">
+                    <div id="progressBar" class="progress-bar">
+                        <div id="progressFill" class="progress-fill"></div>
+                        <div id="playhead" class="playhead"></div>
+                    </div>
+                    <div class="time-display">
+                        <span id="currentTime">0:00</span> / <span id="totalTime">0:00</span>
+                    </div>
+                </div>
+                <audio id="audioPlayer" preload="auto">
+                    <source src="assets/demo-song.mp3" type="audio/mpeg">
+                    Your browser does not support audio playback.
+                </audio>
+            </section>
+
+            <!-- Timeline Section -->
+            <section class="timeline-section">
+                <h2>Video Timeline</h2>
+                <div class="timeline-container">
+                    <div id="timeline" class="timeline">
+                        <!-- Video clips will be placed here -->
+                    </div>
+                    <div class="timeline-markers"></div>
+                </div>
+                <div class="timeline-legend">
+                    <span>0s</span>
+                    <span>10s</span>
+                    <span>20s</span>
+                    <span>30s</span>
+                    <span>40s</span>
+                    <span>50s</span>
+                    <span>60s</span>
+                </div>
+            </section>
+
+            <!-- Clip Library Section -->
+            <section class="clip-library-section">
+                <h2>Clip Library (Click to Add)</h2>
+                <div class="file-upload-controls">
+                    <label for="videoFilesInput" class="btn btn-upload">📁 Add Video Clips</label>
+                    <input type="file" id="videoFilesInput" accept="video/*" multiple style="display: none;">
+                    <span id="videoFilesCount" class="file-name">50 default clips</span>
+                </div>
+                <div class="filter-controls">
+                    <button class="filter-btn active" data-duration="all">All</button>
+                    <button class="filter-btn" data-duration="1">1s</button>
+                    <button class="filter-btn" data-duration="2">2s</button>
+                    <button class="filter-btn" data-duration="3">3s</button>
+                    <button class="filter-btn" data-duration="4">4s</button>
+                    <button class="filter-btn" data-duration="5">5s</button>
+                </div>
+                <div id="clipLibrary" class="clip-library">
+                    <!-- Clips will be generated here -->
+                </div>
+            </section>
+        </main>
+
+        <!-- Game Over Modal -->
+        <div id="gameOverModal" class="modal hidden">
+            <div class="modal-content">
+                <h2 id="gameOverTitle">Game Over!</h2>
+                <p id="gameOverMessage"></p>
+                <p>Final Score: <span id="finalScore"></span></p>
+                <button id="restartBtn" class="btn btn-primary">Play Again</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="game.js"></script>
+</body>
+</html>
