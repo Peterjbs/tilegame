@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tile Adventure - Mini Games Collection</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="game-container">
+        <header>
+            <h1>🎮 Tile Adventure</h1>
+            <div class="score-display">
+                <span>Score: <span id="total-score">0</span></span>
+                <span>Best: <span id="best-score">0</span></span>
+            </div>
+        </header>
+
+        <main id="main-content">
+            <!-- Main Menu -->
+            <div id="main-menu" class="screen active">
+                <h2>Choose Your Adventure!</h2>
+                <div class="game-grid">
+                    <div class="game-tile" data-game="memory">
+                        <div class="tile-icon">🧠</div>
+                        <h3>Memory Match</h3>
+                        <p>Test your memory with tile matching</p>
+                        <button class="play-btn">Play</button>
+                    </div>
+                    <div class="game-tile" data-game="puzzle">
+                        <div class="tile-icon">🧩</div>
+                        <h3>Tile Puzzle</h3>
+                        <p>Solve the sliding tile puzzle</p>
+                        <button class="play-btn">Play</button>
+                    </div>
+                    <div class="game-tile" data-game="trivia">
+                        <div class="tile-icon">❓</div>
+                        <h3>Trivia Challenge</h3>
+                        <p>Answer questions and earn points</p>
+                        <button class="play-btn">Play</button>
+                    </div>
+                    <div class="game-tile" data-game="reaction">
+                        <div class="tile-icon">⚡</div>
+                        <h3>Quick Reaction</h3>
+                        <p>Test your reflexes!</p>
+                        <button class="play-btn">Play</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Memory Match Game -->
+            <div id="memory-game" class="screen game-screen">
+                <div class="game-header">
+                    <button class="back-btn">← Back</button>
+                    <h2>Memory Match</h2>
+                    <div class="game-stats">
+                        <span>Moves: <span id="memory-moves">0</span></span>
+                        <span>Pairs: <span id="memory-pairs">0/8</span></span>
+                    </div>
+                </div>
+                <div id="memory-board" class="memory-board"></div>
+                <div class="game-controls">
+                    <button id="memory-restart" class="btn-secondary">New Game</button>
+                </div>
+            </div>
+
+            <!-- Tile Puzzle Game -->
+            <div id="puzzle-game" class="screen game-screen">
+                <div class="game-header">
+                    <button class="back-btn">← Back</button>
+                    <h2>Tile Puzzle</h2>
+                    <div class="game-stats">
+                        <span>Moves: <span id="puzzle-moves">0</span></span>
+                        <span>Time: <span id="puzzle-time">0:00</span></span>
+                    </div>
+                </div>
+                <div id="puzzle-board" class="puzzle-board"></div>
+                <div class="game-controls">
+                    <button id="puzzle-restart" class="btn-secondary">New Puzzle</button>
+                    <button id="puzzle-hint" class="btn-secondary">Hint</button>
+                </div>
+            </div>
+
+            <!-- Trivia Challenge Game -->
+            <div id="trivia-game" class="screen game-screen">
+                <div class="game-header">
+                    <button class="back-btn">← Back</button>
+                    <h2>Trivia Challenge</h2>
+                    <div class="game-stats">
+                        <span>Question: <span id="trivia-question-num">1/10</span></span>
+                        <span>Correct: <span id="trivia-correct">0</span></span>
+                    </div>
+                </div>
+                <div class="trivia-container">
+                    <div id="trivia-loading" class="loading">Loading questions...</div>
+                    <div id="trivia-error" class="error-message" style="display: none;"></div>
+                    <div id="trivia-content" style="display: none;">
+                        <div id="trivia-question" class="trivia-question"></div>
+                        <div id="trivia-answers" class="trivia-answers"></div>
+                    </div>
+                    <div id="trivia-result" class="trivia-result" style="display: none;"></div>
+                </div>
+                <div class="game-controls">
+                    <button id="trivia-restart" class="btn-secondary">New Game</button>
+                </div>
+            </div>
+
+            <!-- Quick Reaction Game -->
+            <div id="reaction-game" class="screen game-screen">
+                <div class="game-header">
+                    <button class="back-btn">← Back</button>
+                    <h2>Quick Reaction</h2>
+                    <div class="game-stats">
+                        <span>Best Time: <span id="reaction-best">---</span></span>
+                        <span>Average: <span id="reaction-avg">---</span></span>
+                    </div>
+                </div>
+                <div id="reaction-area" class="reaction-area">
+                    <div id="reaction-message" class="reaction-message">Click "Start" to begin!</div>
+                </div>
+                <div class="game-controls">
+                    <button id="reaction-start" class="btn-primary">Start Test</button>
+                    <button id="reaction-restart" class="btn-secondary" style="display: none;">Try Again</button>
+                </div>
+            </div>
+        </main>
+
+        <footer>
+            <p>Made with ❤️ for tile game enthusiasts</p>
+        </footer>
+    </div>
+
+    <script src="game.js"></script>
+    <script src="minigames/memory.js"></script>
+    <script src="minigames/puzzle.js"></script>
+    <script src="minigames/trivia.js"></script>
+    <script src="minigames/reaction.js"></script>
+</body>
+</html>
