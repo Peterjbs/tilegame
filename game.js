@@ -8,7 +8,9 @@ const gameState = {
     score: 0,
     placedClips: [],
     isGameOver: false,
-    filterDuration: 'all' // New filter state
+    filterDuration: 'all', // New filter state
+    customAudioURL: null, // Custom uploaded audio
+    customVideoClips: [] // Custom uploaded video clips
 };
 
 // Clip data - 50 clips with different durations
@@ -42,6 +44,7 @@ let progressFill, playhead, currentTimeDisplay, totalTimeDisplay;
 let timeBehindDisplay, coverageDisplay, scoreDisplay;
 let timeline, clipLibraryElement;
 let gameOverModal, gameOverTitle, gameOverMessage, finalScoreDisplay, restartBtn;
+let audioFileInput, audioFileName, videoFilesInput, videoFilesCount;
 
 // Initialize DOM elements
 function initializeDOMElements() {
@@ -67,6 +70,12 @@ function initializeDOMElements() {
     gameOverMessage = document.getElementById('gameOverMessage');
     finalScoreDisplay = document.getElementById('finalScore');
     restartBtn = document.getElementById('restartBtn');
+    
+    // File upload elements
+    audioFileInput = document.getElementById('audioFileInput');
+    audioFileName = document.getElementById('audioFileName');
+    videoFilesInput = document.getElementById('videoFilesInput');
+    videoFilesCount = document.getElementById('videoFilesCount');
 }
 
 // Event Listeners
@@ -89,6 +98,12 @@ function setupEventListeners() {
         });
     });
     
+    // Audio file upload
+    audioFileInput.addEventListener('change', handleAudioUpload);
+    
+    // Video files upload
+    videoFilesInput.addEventListener('change', handleVideoUpload);
+    
     // Update duration when audio metadata is loaded
     audioPlayer.addEventListener('loadedmetadata', () => {
         gameState.duration = audioPlayer.duration || 60;
@@ -100,6 +115,76 @@ function setupEventListeners() {
     
     // Handle audio end
     audioPlayer.addEventListener('ended', handleAudioEnd);
+}
+
+// Handle Audio File Upload
+function handleAudioUpload(event) {
+    const file = event.target.files[0];
+    if (file) {
+        // Revoke previous URL if exists
+        if (gameState.customAudioURL) {
+            URL.revokeObjectURL(gameState.customAudioURL);
+        }
+        
+        // Create URL for the uploaded file
+        gameState.customAudioURL = URL.createObjectURL(file);
+        audioPlayer.src = gameState.customAudioURL;
+        
+        // Update file name display
+        audioFileName.textContent = file.name;
+        
+        // Reset game when new audio is loaded
+        resetGame();
+    }
+}
+
+// Handle Video Files Upload
+function handleVideoUpload(event) {
+    const files = Array.from(event.target.files);
+    if (files.length === 0) return;
+    
+    // Clear existing custom clips
+    gameState.customVideoClips = [];
+    
+    // Process each video file
+    files.forEach((file, index) => {
+        const videoURL = URL.createObjectURL(file);
+        
+        // Create a temporary video element to get duration
+        const tempVideo = document.createElement('video');
+        tempVideo.src = videoURL;
+        
+        tempVideo.addEventListener('loadedmetadata', () => {
+            const duration = Math.round(tempVideo.duration);
+            const theme = clipThemes[index % clipThemes.length];
+            
+            gameState.customVideoClips.push({
+                id: `custom-clip-${index}`,
+                duration: duration,
+                theme: theme,
+                used: false,
+                videoURL: videoURL,
+                fileName: file.name,
+                isCustom: true
+            });
+            
+            // Update count display
+            videoFilesCount.textContent = `${gameState.customVideoClips.length} custom clip${gameState.customVideoClips.length !== 1 ? 's' : ''}`;
+            
+            // Re-render library when all videos are loaded
+            if (gameState.customVideoClips.length === files.length) {
+                // Replace default clips with custom clips
+                clipLibrary.length = 0;
+                clipLibrary.push(...gameState.customVideoClips);
+                
+                // Sort by duration
+                clipLibrary.sort((a, b) => a.duration - b.duration);
+                
+                renderClipLibrary();
+                resetGame();
+            }
+        });
+    });
 }
 
 // Start Game
