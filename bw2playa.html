@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BW2 Video Player</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            color: #4CAF50;
+        }
+        
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            background-color: #333;
+            border-radius: 5px;
+            font-size: 14px;
+        }
+        
+        #videoPlayer {
+            width: 100%;
+            max-width: 800px;
+            margin: 20px auto;
+            display: block;
+            background-color: #000;
+        }
+        
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        #videoList {
+            margin: 20px 0;
+            padding: 10px;
+            background-color: #2a2a2a;
+            border-radius: 5px;
+        }
+        
+        .video-item {
+            padding: 8px;
+            margin: 5px 0;
+            background-color: #333;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        
+        .video-item:hover {
+            background-color: #444;
+        }
+        
+        .video-item.active {
+            background-color: #4CAF50;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BW2 Video Player</h1>
+        
+        <div id="status">Initializing player...</div>
+        
+        <video id="videoPlayer" controls>
+            Your browser does not support the video tag.
+        </video>
+        
+        <div class="controls">
+            <button id="prevBtn" onclick="playPrevious()">Previous</button>
+            <button id="playBtn" onclick="togglePlay()">Play</button>
+            <button id="nextBtn" onclick="playNext()">Next</button>
+        </div>
+        
+        <div id="videoList"></div>
+    </div>
+    
+    <script>
+        // Global state
+        let videos = [];
+        let currentIndex = 0;
+        let videoPlayer = null;
+        let statusElement = null;
+        let isLoading = false;
+        
+        // Helper function to safely create offscreen video element for duration detection
+        function createOffscreenVideo(url) {
+            return new Promise((resolve, reject) => {
+                const video = document.createElement('video');
+                video.preload = 'metadata';
+                
+                // Set timeout to prevent hanging on bad URLs
+                const timeout = setTimeout(() => {
+                    video.src = '';
+                    reject(new Error(`Timeout loading video metadata for ${url}`));
+                }, 10000);
+                
+                video.onloadedmetadata = () => {
+                    clearTimeout(timeout);
+                    const duration = video.duration || 0;
+                    video.src = ''; // Clean up
+                    resolve({ url, duration });
+                };
+                
+                video.onerror = () => {
+                    clearTimeout(timeout);
+                    video.src = '';
+                    reject(new Error(`Failed to load video: ${url}`));
+                };
+                
+                video.src = url;
+            });
+        }
+        
+        // Helper function to load videos from manifest with error handling
+        async function loadVideosFromManifest() {
+            try {
+                updateStatus('Attempting to fetch /clips/videos.json...');
+                
+                const response = await fetch('/clips/videos.json');
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+                }
+                
+                const manifest = await response.json();
+                
+                if (!Array.isArray(manifest)) {
+                    throw new Error('Manifest is not an array');
+                }
+                
+                updateStatus(`Found ${manifest.length} video(s) in manifest`);
+                
+                // Only populate videos array if we have at least 4 clips
+                if (manifest.length >= 4) {
+                    updateStatus('Loading video metadata for clips from repository manifest...');
+                    
+                    // Load metadata for each video to determine duration
+                    const videoPromises = manifest.map(url => 
+                        createOffscreenVideo(url).catch(err => {
+                            console.warn(`Error loading ${url}:`, err);
+                            return { url, duration: 0, error: true };
+                        })
+                    );
+                    
+                    const loadedVideos = await Promise.all(videoPromises);
+                    videos = loadedVideos.filter(v => !v.error);
+                    
+                    updateStatus(`Successfully loaded ${videos.length} videos from repository manifest (${manifest.length - videos.length} failed)`);
+                    return true;
+                } else {
+                    updateStatus(`Manifest has ${manifest.length} video(s), but at least 4 are required. Using local files instead.`);
+                    return false;
+                }
+            } catch (error) {
+                console.error('Error loading manifest:', error);
+                updateStatus(`Could not load /clips/videos.json (${error.message}). Using local files instead.`);
+                return false;
+            }
+        }
+        
+        // Helper function to update status text
+        function updateStatus(message) {
+            if (statusElement) {
+                const timestamp = new Date().toLocaleTimeString();
+                statusElement.textContent = `[${timestamp}] ${message}`;
+            }
+            console.log(message);
+        }
+        
+        // Initialize video player with hardened startup logic
+        async function initPlayer() {
+            videoPlayer = document.getElementById('videoPlayer');
+            statusElement = document.getElementById('status');
+            
+            if (!videoPlayer) {
+                console.error('Video player element not found');
+                return;
+            }
+            
+            updateStatus('Initializing video player...');
+            
+            // Add event listeners for video player with error handling
+            videoPlayer.addEventListener('ended', handleVideoEnded);
+            videoPlayer.addEventListener('error', handleVideoError);
+            videoPlayer.addEventListener('loadstart', () => updateStatus('Loading video...'));
+            videoPlayer.addEventListener('canplay', () => updateStatus('Video ready to play'));
+            
+            // Try to load videos from repository manifest first
+            const manifestLoaded = await loadVideosFromManifest();
+            
+            // If manifest didn't work or had insufficient videos, use fallback
+            if (!manifestLoaded || videos.length === 0) {
+                // NOTE: In production, you would add local file selection or default videos here
+                updateStatus('No videos available. Please add video files to /clips/ and update videos.json.');
+                disableControls();
+                return;
+            }
+            
+            // Update UI
+            renderVideoList();
+            
+            if (videos.length > 0) {
+                loadVideo(0);
+                enableControls();
+            } else {
+                disableControls();
+            }
+        }
+        
+        // Timer and video startup hardening
+        function loadVideo(index) {
+            if (isLoading) {
+                console.warn('Video load already in progress, skipping');
+                return;
+            }
+            
+            if (index < 0 || index >= videos.length) {
+                console.error('Invalid video index:', index);
+                return;
+            }
+            
+            isLoading = true;
+            currentIndex = index;
+            
+            const video = videos[index];
+            updateStatus(`Loading video ${index + 1} of ${videos.length}: ${video.url}`);
+            
+            // Set a timeout to handle stuck video loads
+            const loadTimeout = setTimeout(() => {
+                if (isLoading) {
+                    updateStatus(`Video load timeout for ${video.url}`);
+                    isLoading = false;
+                }
+            }, 15000);
+            
+            videoPlayer.src = video.url;
+            
+            // Clear loading flag when video is ready
+            const handleCanPlay = () => {
+                clearTimeout(loadTimeout);
+                isLoading = false;
+                updateStatus(`Video ${index + 1} ready (duration: ${formatDuration(video.duration)})`);
+                videoPlayer.removeEventListener('canplay', handleCanPlay);
+            };
+            
+            videoPlayer.addEventListener('canplay', handleCanPlay, { once: true });
+            
+            // Update active state in list
+            updateVideoListActive();
+        }
+        
+        // Format duration helper
+        function formatDuration(seconds) {
+            if (!seconds || seconds === 0) return 'unknown';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        // Event handlers
+        function handleVideoEnded() {
+            updateStatus('Video ended');
+            // Auto-play next video if available
+            if (currentIndex < videos.length - 1) {
+                playNext();
+            } else {
+                updateStatus('Playlist ended');
+            }
+        }
+        
+        function handleVideoError(e) {
+            isLoading = false;
+            const error = videoPlayer.error;
+            const errorMsg = error ? `Error code ${error.code}: ${error.message}` : 'Unknown error';
+            updateStatus(`Video playback error: ${errorMsg}`);
+            console.error('Video error:', error);
+        }
+        
+        // Control functions
+        function togglePlay() {
+            if (!videoPlayer) return;
+            
+            if (videoPlayer.paused) {
+                videoPlayer.play()
+                    .then(() => updateStatus('Playing'))
+                    .catch(err => {
+                        updateStatus(`Play failed: ${err.message}`);
+                        console.error('Play error:', err);
+                    });
+                document.getElementById('playBtn').textContent = 'Pause';
+            } else {
+                videoPlayer.pause();
+                updateStatus('Paused');
+                document.getElementById('playBtn').textContent = 'Play';
+            }
+        }
+        
+        function playNext() {
+            if (currentIndex < videos.length - 1) {
+                loadVideo(currentIndex + 1);
+                if (!videoPlayer.paused) {
+                    videoPlayer.play().catch(err => console.error('Play error:', err));
+                }
+            }
+        }
+        
+        function playPrevious() {
+            if (currentIndex > 0) {
+                loadVideo(currentIndex - 1);
+                if (!videoPlayer.paused) {
+                    videoPlayer.play().catch(err => console.error('Play error:', err));
+                }
+            }
+        }
+        
+        // UI functions
+        function renderVideoList() {
+            const listElement = document.getElementById('videoList');
+            if (!listElement || videos.length === 0) return;
+            
+            listElement.innerHTML = '<h3>Playlist:</h3>';
+            
+            videos.forEach((video, index) => {
+                const item = document.createElement('div');
+                item.className = 'video-item';
+                item.textContent = `${index + 1}. ${video.url} (${formatDuration(video.duration)})`;
+                item.onclick = () => {
+                    loadVideo(index);
+                    if (!videoPlayer.paused) {
+                        videoPlayer.play().catch(err => console.error('Play error:', err));
+                    }
+                };
+                listElement.appendChild(item);
+            });
+            
+            updateVideoListActive();
+        }
+        
+        function updateVideoListActive() {
+            const items = document.querySelectorAll('.video-item');
+            items.forEach((item, index) => {
+                if (index === currentIndex) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+        
+        function enableControls() {
+            document.getElementById('prevBtn').disabled = false;
+            document.getElementById('playBtn').disabled = false;
+            document.getElementById('nextBtn').disabled = false;
+        }
+        
+        function disableControls() {
+            document.getElementById('prevBtn').disabled = true;
+            document.getElementById('playBtn').disabled = true;
+            document.getElementById('nextBtn').disabled = true;
+        }
+        
+        // Initialize on page load with error handling
+        window.addEventListener('DOMContentLoaded', () => {
+            initPlayer().catch(err => {
+                console.error('Initialization error:', err);
+                updateStatus(`Initialization failed: ${err.message}`);
+            });
+        });
+        
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (videoPlayer) {
+                videoPlayer.pause();
+                videoPlayer.src = '';
+            }
+        });
+    </script>
+</body>
+</html>
