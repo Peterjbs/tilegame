@@ -1,0 +1,355 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BW2 Player</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .status {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        
+        .video-container {
+            position: relative;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        video {
+            width: 100%;
+            display: block;
+        }
+        
+        .controls {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        .controls button {
+            background: #4a4a4a;
+            border: none;
+            color: #fff;
+            padding: 10px 20px;
+            margin: 5px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        
+        .controls button:hover {
+            background: #5a5a5a;
+        }
+        
+        .controls button:active {
+            background: #3a3a3a;
+        }
+        
+        .video-list {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .video-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: #3a3a3a;
+            border-radius: 5px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .video-item:hover {
+            background: #4a4a4a;
+        }
+        
+        .video-item.active {
+            background: #007bff;
+        }
+        
+        .video-info {
+            flex: 1;
+        }
+        
+        .video-name {
+            font-weight: bold;
+            margin-bottom: 3px;
+        }
+        
+        .video-duration {
+            font-size: 12px;
+            color: #aaa;
+        }
+        
+        .loading {
+            text-align: center;
+            padding: 20px;
+            font-size: 16px;
+        }
+        
+        .error {
+            background: #ff4444;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BW2 Video Player</h1>
+        
+        <div id="statusMessage" class="status">Loading videos...</div>
+        
+        <div class="video-container">
+            <video id="mainVideo" controls>
+                Your browser does not support the video tag.
+            </video>
+        </div>
+        
+        <div class="controls">
+            <button id="prevBtn">Previous</button>
+            <button id="playPauseBtn">Play/Pause</button>
+            <button id="nextBtn">Next</button>
+            <button id="shuffleBtn">Shuffle</button>
+        </div>
+        
+        <div class="video-list" id="videoList">
+            <div class="loading">Loading video list...</div>
+        </div>
+    </div>
+    
+    <script>
+        // Global state
+        let videos = [];
+        let currentIndex = 0;
+        
+        // DOM elements
+        const mainVideo = document.getElementById('mainVideo');
+        const statusMessage = document.getElementById('statusMessage');
+        const videoList = document.getElementById('videoList');
+        const prevBtn = document.getElementById('prevBtn');
+        const playPauseBtn = document.getElementById('playPauseBtn');
+        const nextBtn = document.getElementById('nextBtn');
+        const shuffleBtn = document.getElementById('shuffleBtn');
+        
+        // Load videos on page load
+        window.addEventListener('load', async () => {
+            try {
+                await loadVideos();
+            } catch (error) {
+                showError('Failed to load videos: ' + error.message);
+            }
+        });
+        
+        // Fetch and process videos.json
+        async function loadVideos() {
+            try {
+                const response = await fetch('/clips/videos.json', { cache: 'no-cache' });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const videoPaths = await response.json();
+                
+                if (!Array.isArray(videoPaths)) {
+                    throw new Error('Invalid videos.json format - expected array');
+                }
+                
+                if (videoPaths.length < 4) {
+                    throw new Error('Not enough videos in manifest (minimum 4 required)');
+                }
+                
+                statusMessage.textContent = `Loading metadata for ${videoPaths.length} videos...`;
+                
+                // Process each video path to get duration and name
+                videos = await Promise.all(videoPaths.map(async (url, index) => {
+                    const duration = await getVideoDuration(url);
+                    const name = extractVideoName(url);
+                    
+                    // Update progress
+                    if ((index + 1) % 10 === 0 || index === videoPaths.length - 1) {
+                        statusMessage.textContent = `Loaded ${index + 1}/${videoPaths.length} videos...`;
+                    }
+                    
+                    return { url, duration, name };
+                }));
+                
+                statusMessage.textContent = `Loaded ${videos.length} videos successfully!`;
+                renderVideoList();
+                
+                if (videos.length > 0) {
+                    loadVideo(0);
+                }
+                
+            } catch (error) {
+                throw error;
+            }
+        }
+        
+        // Get video duration using offscreen video element
+        function getVideoDuration(url) {
+            return new Promise((resolve, reject) => {
+                const video = document.createElement('video');
+                video.preload = 'metadata';
+                
+                video.addEventListener('loadedmetadata', () => {
+                    resolve(video.duration);
+                });
+                
+                video.addEventListener('error', () => {
+                    // If video fails to load, return 0 duration
+                    resolve(0);
+                });
+                
+                // Set timeout to avoid hanging
+                const timeout = setTimeout(() => {
+                    resolve(0);
+                }, 5000);
+                
+                video.addEventListener('loadedmetadata', () => {
+                    clearTimeout(timeout);
+                }, { once: true });
+                
+                video.src = url;
+            });
+        }
+        
+        // Extract video name from URL
+        function extractVideoName(url) {
+            const parts = url.split('/');
+            const filename = parts[parts.length - 1];
+            return filename.replace('.mp4', '');
+        }
+        
+        // Format duration in MM:SS
+        function formatDuration(seconds) {
+            if (seconds === 0 || isNaN(seconds)) {
+                return '--:--';
+            }
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        // Render video list
+        function renderVideoList() {
+            videoList.innerHTML = '';
+            
+            videos.forEach((video, index) => {
+                const item = document.createElement('div');
+                item.className = 'video-item';
+                if (index === currentIndex) {
+                    item.classList.add('active');
+                }
+                
+                item.innerHTML = `
+                    <div class="video-info">
+                        <div class="video-name">${index + 1}. ${video.name}</div>
+                        <div class="video-duration">Duration: ${formatDuration(video.duration)}</div>
+                    </div>
+                `;
+                
+                item.addEventListener('click', () => {
+                    loadVideo(index);
+                });
+                
+                videoList.appendChild(item);
+            });
+        }
+        
+        // Load video at index
+        function loadVideo(index) {
+            if (index < 0 || index >= videos.length) {
+                return;
+            }
+            
+            currentIndex = index;
+            mainVideo.src = videos[index].url;
+            mainVideo.load();
+            
+            // Update active state in list
+            renderVideoList();
+        }
+        
+        // Show error message
+        function showError(message) {
+            statusMessage.className = 'error';
+            statusMessage.textContent = message;
+        }
+        
+        // Control buttons
+        prevBtn.addEventListener('click', () => {
+            if (currentIndex > 0) {
+                loadVideo(currentIndex - 1);
+                mainVideo.play();
+            }
+        });
+        
+        playPauseBtn.addEventListener('click', () => {
+            if (mainVideo.paused) {
+                mainVideo.play();
+            } else {
+                mainVideo.pause();
+            }
+        });
+        
+        nextBtn.addEventListener('click', () => {
+            if (currentIndex < videos.length - 1) {
+                loadVideo(currentIndex + 1);
+                mainVideo.play();
+            }
+        });
+        
+        shuffleBtn.addEventListener('click', () => {
+            const randomIndex = Math.floor(Math.random() * videos.length);
+            loadVideo(randomIndex);
+            mainVideo.play();
+        });
+        
+        // Auto-play next video when current ends
+        mainVideo.addEventListener('ended', () => {
+            if (currentIndex < videos.length - 1) {
+                loadVideo(currentIndex + 1);
+                mainVideo.play();
+            }
+        });
+    </script>
+</body>
+</html>
