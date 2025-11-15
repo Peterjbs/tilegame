@@ -216,6 +216,12 @@
         const NUM_QUADS = 4;
         const MIN_CLIPS_REQUIRED = 4;
         const READY_WAIT_MS = 100; // Small wait before transitioning to RUNNING
+        const MIN_TASK_DELAY_MS = 1000; // Minimum delay for task scheduling
+        const MAX_TASK_DELAY_MS = 5000; // Maximum random delay for task scheduling
+        const TASK_INTERVAL_MS = 3000; // Base interval between tasks
+        const OVERLAY_HIDE_DELAY_MS = 2000; // Auto-hide overlay after this duration
+        const BASE_BACKOFF_DELAY_MS = 100; // Base delay for video playback retry backoff
+        const CLIP_RETRY_DELAY_MS = 100; // Delay before retrying clip selection
         
         // ===== Global State =====
         let gameState = STATES.IDLE;
@@ -311,7 +317,7 @@
                         // Backoff and retry or dispatch ended event
                         if (attemptCount < MAX_ATTEMPTS) {
                             attemptCount++;
-                            const backoffDelay = 100 * attemptCount;
+                            const backoffDelay = BASE_BACKOFF_DELAY_MS * attemptCount;
                             registerTimer(setTimeout(async () => {
                                 try {
                                     await v.play();
@@ -370,7 +376,7 @@
                 if (quad.overlay) {
                     quad.overlay.classList.add('hidden');
                 }
-            }, 2000));
+            }, OVERLAY_HIDE_DELAY_MS));
         }
         
         /**
@@ -397,7 +403,7 @@
                 // Calculate delay based on target time
                 if (!q.nextTargetTime) {
                     // First schedule - random delay 1-5 seconds
-                    delay = 1000 + Math.random() * 4000;
+                    delay = MIN_TASK_DELAY_MS + Math.random() * (MAX_TASK_DELAY_MS - MIN_TASK_DELAY_MS);
                     q.nextTargetTime = now + delay;
                 } else {
                     delay = Math.max(0, q.nextTargetTime - now);
@@ -407,7 +413,7 @@
                     if (drift > MAX_SCHEDULE_DRIFT_MS) {
                         console.debug(`Large drift detected for quad ${qi}: ${drift.toFixed(0)}ms, rescheduling`);
                         // Reschedule with fresh target
-                        delay = 1000 + Math.random() * 4000;
+                        delay = MIN_TASK_DELAY_MS + Math.random() * (MAX_TASK_DELAY_MS - MIN_TASK_DELAY_MS);
                         q.nextTargetTime = now + delay;
                     }
                 }
@@ -421,7 +427,7 @@
                 showCue(qi, `Task ${qi}`);
                 
                 // Schedule next
-                q.nextTargetTime = performance.now() + 3000 + Math.random() * 4000;
+                q.nextTargetTime = performance.now() + TASK_INTERVAL_MS + Math.random() * (MAX_TASK_DELAY_MS - MIN_TASK_DELAY_MS);
                 scheduleNextTask(qi, false);
             }, delay));
         }
@@ -463,7 +469,7 @@
                 if (clipInUse) {
                     console.debug(`Quad ${qi}: Skipping clip ${clipIndex} (in use by another quad)`);
                     // Try another clip immediately
-                    registerTimer(setTimeout(playNext, 100));
+                    registerTimer(setTimeout(playNext, CLIP_RETRY_DELAY_MS));
                     return;
                 }
                 
