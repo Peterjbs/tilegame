@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BW2 Video Player</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        
+        #video-container {
+            position: relative;
+            width: 100%;
+            background-color: #000;
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 20px;
+        }
+        
+        #main-video {
+            width: 100%;
+            display: block;
+        }
+        
+        #controls {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            margin: 5px;
+            cursor: pointer;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        #status {
+            background-color: #2a2a2a;
+            padding: 10px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        
+        #playlist {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+        }
+        
+        .video-item {
+            padding: 8px;
+            margin: 5px 0;
+            background-color: #3a3a3a;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .video-item:hover {
+            background-color: #4a4a4a;
+        }
+        
+        .video-item.active {
+            background-color: #4CAF50;
+        }
+        
+        .error {
+            color: #ff6b6b;
+            padding: 10px;
+            background-color: #3a2a2a;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        
+        .success {
+            color: #51cf66;
+        }
+    </style>
+</head>
+<body>
+    <h1>BW2 Video Player</h1>
+    
+    <div id="status">Loading manifest...</div>
+    
+    <div id="video-container">
+        <video id="main-video" controls>
+            Your browser does not support the video tag.
+        </video>
+    </div>
+    
+    <div id="controls">
+        <button id="prev-btn" disabled>Previous</button>
+        <button id="play-btn">Play</button>
+        <button id="pause-btn">Pause</button>
+        <button id="next-btn" disabled>Next</button>
+    </div>
+    
+    <div id="playlist">
+        <h3>Playlist</h3>
+        <div id="playlist-items"></div>
+    </div>
+
+    <script>
+        // Global state
+        let videos = [];
+        let currentIndex = 0;
+        let videoDurations = new Map();
+        
+        // DOM elements
+        const statusEl = document.getElementById('status');
+        const mainVideo = document.getElementById('main-video');
+        const playlistEl = document.getElementById('playlist-items');
+        const prevBtn = document.getElementById('prev-btn');
+        const nextBtn = document.getElementById('next-btn');
+        const playBtn = document.getElementById('play-btn');
+        const pauseBtn = document.getElementById('pause-btn');
+        
+        // Determine video duration using offscreen video element
+        async function getVideoDuration(url) {
+            return new Promise((resolve, reject) => {
+                // Create offscreen video element
+                const offscreenVideo = document.createElement('video');
+                offscreenVideo.style.display = 'none';
+                offscreenVideo.preload = 'metadata';
+                
+                offscreenVideo.addEventListener('loadedmetadata', () => {
+                    const duration = offscreenVideo.duration;
+                    document.body.removeChild(offscreenVideo);
+                    resolve(duration);
+                });
+                
+                offscreenVideo.addEventListener('error', (e) => {
+                    document.body.removeChild(offscreenVideo);
+                    reject(new Error(`Failed to load video: ${url}`));
+                });
+                
+                document.body.appendChild(offscreenVideo);
+                offscreenVideo.src = url;
+            });
+        }
+        
+        // Load manifest and populate videos array
+        async function loadManifest() {
+            try {
+                statusEl.textContent = 'Fetching manifest...';
+                const response = await fetch('/clips/videos.json', { cache: 'no-cache' });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP error! status: ${response.status}`);
+                }
+                
+                const manifest = await response.json();
+                
+                if (!Array.isArray(manifest)) {
+                    throw new Error('Manifest is not an array');
+                }
+                
+                if (manifest.length < 4) {
+                    statusEl.innerHTML = `<span class="error">Manifest contains only ${manifest.length} videos. At least 4 are required.</span>`;
+                    return;
+                }
+                
+                // Populate videos array from manifest
+                videos = manifest;
+                statusEl.innerHTML = `<span class="success">Loaded ${videos.length} videos from manifest</span>`;
+                
+                // Determine durations for all videos
+                await loadVideoDurations();
+                
+                // Initialize player
+                initializePlayer();
+                
+            } catch (error) {
+                statusEl.innerHTML = `<span class="error">Error loading manifest: ${error.message}</span>`;
+                console.error('Error loading manifest:', error);
+            }
+        }
+        
+        // Load durations for all videos
+        async function loadVideoDurations() {
+            statusEl.textContent = 'Loading video metadata...';
+            
+            for (let i = 0; i < videos.length; i++) {
+                const url = videos[i];
+                try {
+                    const duration = await getVideoDuration(url);
+                    videoDurations.set(url, duration);
+                    statusEl.textContent = `Loading video metadata... (${i + 1}/${videos.length})`;
+                } catch (error) {
+                    console.error(`Failed to get duration for ${url}:`, error);
+                    videoDurations.set(url, 0); // Set to 0 if failed
+                }
+            }
+            
+            statusEl.innerHTML = `<span class="success">All video metadata loaded</span>`;
+        }
+        
+        // Initialize the player
+        function initializePlayer() {
+            if (videos.length === 0) {
+                return;
+            }
+            
+            // Render playlist
+            renderPlaylist();
+            
+            // Load first video
+            loadVideo(0);
+            
+            // Enable controls
+            updateControls();
+        }
+        
+        // Render the playlist
+        function renderPlaylist() {
+            playlistEl.innerHTML = '';
+            
+            videos.forEach((url, index) => {
+                const item = document.createElement('div');
+                item.className = 'video-item';
+                if (index === currentIndex) {
+                    item.classList.add('active');
+                }
+                
+                const duration = videoDurations.get(url);
+                const durationStr = duration > 0 ? formatDuration(duration) : 'Unknown';
+                const fileName = url.split('/').pop();
+                
+                item.textContent = `${index + 1}. ${fileName} (${durationStr})`;
+                item.addEventListener('click', () => loadVideo(index));
+                
+                playlistEl.appendChild(item);
+            });
+        }
+        
+        // Format duration as MM:SS
+        function formatDuration(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+        
+        // Load a specific video
+        function loadVideo(index) {
+            if (index < 0 || index >= videos.length) {
+                return;
+            }
+            
+            currentIndex = index;
+            mainVideo.src = videos[index];
+            mainVideo.load();
+            
+            renderPlaylist();
+            updateControls();
+        }
+        
+        // Update control buttons state
+        function updateControls() {
+            prevBtn.disabled = currentIndex === 0;
+            nextBtn.disabled = currentIndex === videos.length - 1;
+        }
+        
+        // Event listeners
+        prevBtn.addEventListener('click', () => {
+            if (currentIndex > 0) {
+                loadVideo(currentIndex - 1);
+            }
+        });
+        
+        nextBtn.addEventListener('click', () => {
+            if (currentIndex < videos.length - 1) {
+                loadVideo(currentIndex + 1);
+            }
+        });
+        
+        playBtn.addEventListener('click', () => {
+            mainVideo.play();
+        });
+        
+        pauseBtn.addEventListener('click', () => {
+            mainVideo.pause();
+        });
+        
+        // Auto-advance to next video when current ends
+        mainVideo.addEventListener('ended', () => {
+            if (currentIndex < videos.length - 1) {
+                loadVideo(currentIndex + 1);
+                mainVideo.play();
+            }
+        });
+        
+        // Load manifest on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            loadManifest();
+        });
+    </script>
+</body>
+</html>
