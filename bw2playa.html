@@ -163,7 +163,7 @@
         
         <div class="controls">
             <label for="fileInput" class="btn-upload" style="display: inline-block; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
-                📁 Load Video Clips (min 4)
+                📁 Pick videos (fallback)
             </label>
             <input type="file" id="fileInput" multiple accept="video/*">
             <button id="btnStart" disabled>▶️ Start Cycle</button>
@@ -172,7 +172,7 @@
         </div>
         
         <div class="file-info" id="fileInfo">
-            No clips loaded. Please select at least 4 video files to begin.
+            Attempting to load clips from repository manifest... To use repository clips, commit a JSON manifest at /clips/videos.json with an array of relative paths (e.g. ["/clips/clip1.mp4", "/clips/clip2.mp4"]). Otherwise use 'Pick videos' to load local files.
         </div>
         
         <div class="status" id="status">
@@ -707,9 +707,96 @@
             });
         }
         
+        /**
+         * Load videos from repository manifest at /clips/videos.json
+         * @returns {Promise<boolean>} True if manifest loaded successfully
+         */
+        async function loadManifestVideos() {
+            try {
+                fileInfo.textContent = 'Attempting to load clips from repository manifest...';
+                fileInfo.style.color = '#fff';
+                
+                const response = await fetch('/clips/videos.json', {
+                    cache: 'no-cache'
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch manifest: ${response.status}`);
+                }
+                
+                const manifestUrls = await response.json();
+                
+                if (!Array.isArray(manifestUrls)) {
+                    throw new Error('Manifest must be an array of video URLs');
+                }
+                
+                if (manifestUrls.length < MIN_CLIPS_REQUIRED) {
+                    throw new Error(`Manifest contains ${manifestUrls.length} clips, need at least ${MIN_CLIPS_REQUIRED}`);
+                }
+                
+                // Load metadata for all videos
+                videoClips = [];
+                let loadedCount = 0;
+                const loadPromises = [];
+                
+                manifestUrls.forEach((url) => {
+                    const promise = new Promise((resolve, reject) => {
+                        const tempVideo = document.createElement('video');
+                        
+                        tempVideo.addEventListener('loadedmetadata', () => {
+                            const clip = {
+                                url: url,
+                                duration: tempVideo.duration,
+                                name: url.split('/').pop()
+                            };
+                            videoClips.push(clip);
+                            loadedCount++;
+                            
+                            // Clean up temp video
+                            tempVideo.src = '';
+                            resolve(clip);
+                        }, { once: true });
+                        
+                        tempVideo.addEventListener('error', (err) => {
+                            console.warn(`Failed to load video metadata for ${url}:`, err);
+                            tempVideo.src = '';
+                            reject(err);
+                        }, { once: true });
+                        
+                        tempVideo.src = url;
+                    });
+                    
+                    loadPromises.push(promise);
+                });
+                
+                // Wait for all videos to load
+                const results = await Promise.allSettled(loadPromises);
+                const successCount = results.filter(r => r.status === 'fulfilled').length;
+                
+                if (successCount < MIN_CLIPS_REQUIRED) {
+                    videoClips = [];
+                    throw new Error(`Only ${successCount} clips loaded successfully, need at least ${MIN_CLIPS_REQUIRED}`);
+                }
+                
+                // Success!
+                fileInfo.textContent = `✅ Loaded ${videoClips.length} videos from /clips/videos.json`;
+                fileInfo.style.color = '#4CAF50';
+                updateUI();
+                return true;
+                
+            } catch (error) {
+                console.warn('Failed to load manifest:', error.message);
+                videoClips = [];
+                fileInfo.textContent = 'To use repository clips, commit a JSON manifest at /clips/videos.json with an array of relative paths (e.g. ["/clips/clip1.mp4", "/clips/clip2.mp4"]). Otherwise use \'Pick videos\' to load local files.';
+                fileInfo.style.color = '#ff9800';
+                updateUI();
+                return false;
+            }
+        }
+        
         // ===== Initialize =====
         
-        function init() {
+        async function init() {
             // Initialize quad objects
             for (let i = 0; i < NUM_QUADS; i++) {
                 const quadEl = document.getElementById(`quad${i}`);
@@ -740,6 +827,10 @@
             document.addEventListener('visibilitychange', handleVisibilityChange);
             
             updateUI();
+            
+            // Try to load videos from manifest
+            await loadManifestVideos();
+            
             console.log('BW2 Playa initialized');
         }
         
