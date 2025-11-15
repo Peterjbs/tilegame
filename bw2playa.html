@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BW2 Player</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #fff;
+        }
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        #status {
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: #2a2a2a;
+            border-radius: 5px;
+        }
+        #videoList {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .video-item {
+            background-color: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #3a3a3a;
+        }
+        .video-item h3 {
+            margin-top: 0;
+            font-size: 16px;
+            color: #4a9eff;
+        }
+        .video-info {
+            font-size: 14px;
+            color: #aaa;
+        }
+        .duration {
+            color: #4aff4a;
+            font-weight: bold;
+        }
+        .loading {
+            color: #ffaa4a;
+        }
+        .error {
+            color: #ff4a4a;
+        }
+    </style>
+</head>
+<body>
+    <h1>BW2 Video Player</h1>
+    <div id="status">Loading manifest...</div>
+    <div id="videoList"></div>
+
+    <script>
+        // Array to store video information
+        let videos = [];
+
+        // Function to load video duration using an offscreen video element
+        async function getVideoDuration(videoUrl) {
+            return new Promise((resolve, reject) => {
+                const video = document.createElement('video');
+                video.preload = 'metadata';
+                
+                video.addEventListener('loadedmetadata', () => {
+                    resolve(video.duration);
+                });
+                
+                video.addEventListener('error', (e) => {
+                    reject(new Error(`Failed to load video: ${videoUrl}`));
+                });
+                
+                video.src = videoUrl;
+            });
+        }
+
+        // Function to format duration in seconds to MM:SS
+        function formatDuration(seconds) {
+            if (isNaN(seconds) || !isFinite(seconds)) {
+                return 'Unknown';
+            }
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Function to update the UI with video information
+        function updateVideoList() {
+            const videoList = document.getElementById('videoList');
+            videoList.innerHTML = '';
+            
+            videos.forEach((video, index) => {
+                const videoItem = document.createElement('div');
+                videoItem.className = 'video-item';
+                
+                const title = document.createElement('h3');
+                title.textContent = `Video ${index + 1}: ${video.url.split('/').pop()}`;
+                
+                const info = document.createElement('div');
+                info.className = 'video-info';
+                
+                if (video.duration !== undefined) {
+                    info.innerHTML = `
+                        <div>URL: ${video.url}</div>
+                        <div>Duration: <span class="duration">${formatDuration(video.duration)}</span></div>
+                    `;
+                } else if (video.error) {
+                    info.innerHTML = `
+                        <div>URL: ${video.url}</div>
+                        <div class="error">Error: ${video.error}</div>
+                    `;
+                } else {
+                    info.innerHTML = `
+                        <div>URL: ${video.url}</div>
+                        <div class="loading">Loading duration...</div>
+                    `;
+                }
+                
+                videoItem.appendChild(title);
+                videoItem.appendChild(info);
+                videoList.appendChild(videoItem);
+            });
+        }
+
+        // Function to load all video durations
+        async function loadVideoDurations() {
+            for (let i = 0; i < videos.length; i++) {
+                try {
+                    const duration = await getVideoDuration(videos[i].url);
+                    videos[i].duration = duration;
+                    updateVideoList();
+                } catch (error) {
+                    videos[i].error = error.message;
+                    updateVideoList();
+                }
+            }
+        }
+
+        // Main initialization function
+        async function init() {
+            const statusDiv = document.getElementById('status');
+            
+            try {
+                // Fetch the manifest with no-cache
+                const response = await fetch('/clips/videos.json', { cache: 'no-cache' });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch manifest: ${response.status} ${response.statusText}`);
+                }
+                
+                const manifest = await response.json();
+                
+                // Check if manifest is an array and has at least 4 items
+                if (!Array.isArray(manifest)) {
+                    throw new Error('Manifest is not an array');
+                }
+                
+                if (manifest.length < 4) {
+                    statusDiv.innerHTML = `<span class="error">Manifest has only ${manifest.length} videos. Minimum 4 required.</span>`;
+                    return;
+                }
+                
+                // Populate videos array from manifest URLs
+                videos = manifest.map(url => ({ url }));
+                
+                statusDiv.innerHTML = `<span style="color: #4aff4a;">Manifest loaded successfully: ${videos.length} videos found. Loading durations...</span>`;
+                
+                // Initial render
+                updateVideoList();
+                
+                // Load durations for all videos
+                await loadVideoDurations();
+                
+                statusDiv.innerHTML = `<span style="color: #4aff4a;">All video information loaded: ${videos.length} videos</span>`;
+                
+            } catch (error) {
+                statusDiv.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+                console.error('Error loading manifest:', error);
+            }
+        }
+
+        // Run initialization when page loads
+        window.addEventListener('DOMContentLoaded', init);
+    </script>
+</body>
+</html>
