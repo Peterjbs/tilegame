@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BW2 Video Player</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #1a1a1a;
+            color: #ffffff;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        #videoPlayer {
+            width: 100%;
+            max-width: 800px;
+            margin: 0 auto;
+            display: block;
+            background-color: #000;
+        }
+        
+        .controls {
+            max-width: 800px;
+            margin: 20px auto;
+            text-align: center;
+        }
+        
+        .playlist {
+            max-width: 800px;
+            margin: 30px auto;
+        }
+        
+        .playlist-item {
+            padding: 10px;
+            margin: 5px 0;
+            background-color: #2a2a2a;
+            border-radius: 5px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .playlist-item:hover {
+            background-color: #3a3a3a;
+        }
+        
+        .playlist-item.active {
+            background-color: #4a4a4a;
+            border-left: 4px solid #00ff00;
+        }
+        
+        .video-info {
+            flex: 1;
+        }
+        
+        .video-duration {
+            color: #888;
+            font-size: 0.9em;
+        }
+        
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 5px;
+        }
+        
+        button:hover {
+            background-color: #45a049;
+        }
+        
+        button:disabled {
+            background-color: #666;
+            cursor: not-allowed;
+        }
+        
+        #status {
+            text-align: center;
+            padding: 20px;
+            margin: 20px auto;
+            max-width: 800px;
+            background-color: #2a2a2a;
+            border-radius: 5px;
+        }
+        
+        .error {
+            color: #ff6b6b;
+        }
+        
+        .success {
+            color: #51cf66;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>BW2 Video Player</h1>
+        
+        <div id="status">Loading videos...</div>
+        
+        <video id="videoPlayer" controls style="display: none;">
+            Your browser does not support the video tag.
+        </video>
+        
+        <div class="controls" style="display: none;">
+            <button id="prevBtn">Previous</button>
+            <button id="nextBtn">Next</button>
+        </div>
+        
+        <div class="playlist" id="playlist"></div>
+    </div>
+
+    <script>
+        let videos = [];
+        let currentVideoIndex = 0;
+        const videoPlayer = document.getElementById('videoPlayer');
+        const statusDiv = document.getElementById('status');
+        const playlistDiv = document.getElementById('playlist');
+        const controlsDiv = document.querySelector('.controls');
+        const prevBtn = document.getElementById('prevBtn');
+        const nextBtn = document.getElementById('nextBtn');
+
+        // Function to format duration in seconds to MM:SS
+        function formatDuration(seconds) {
+            if (!seconds || isNaN(seconds)) return 'Unknown';
+            const mins = Math.floor(seconds / 60);
+            const secs = Math.floor(seconds % 60);
+            return `${mins}:${secs.toString().padStart(2, '0')}`;
+        }
+
+        // Function to determine video duration using an offscreen video element
+        async function getVideoDuration(url) {
+            return new Promise((resolve, reject) => {
+                const offscreenVideo = document.createElement('video');
+                offscreenVideo.preload = 'metadata';
+                
+                offscreenVideo.addEventListener('loadedmetadata', () => {
+                    resolve(offscreenVideo.duration);
+                    offscreenVideo.remove();
+                });
+                
+                offscreenVideo.addEventListener('error', () => {
+                    resolve(null); // Return null if video can't be loaded
+                    offscreenVideo.remove();
+                });
+                
+                offscreenVideo.src = url;
+            });
+        }
+
+        // Function to load video metadata
+        async function loadVideoMetadata() {
+            statusDiv.textContent = 'Loading video metadata...';
+            
+            for (let i = 0; i < videos.length; i++) {
+                const video = videos[i];
+                video.duration = await getVideoDuration(video.url);
+                updatePlaylistItem(i);
+            }
+            
+            statusDiv.innerHTML = `<span class="success">Loaded ${videos.length} videos</span>`;
+        }
+
+        // Function to create playlist item
+        function createPlaylistItem(video, index) {
+            const item = document.createElement('div');
+            item.className = 'playlist-item';
+            item.dataset.index = index;
+            
+            const info = document.createElement('div');
+            info.className = 'video-info';
+            info.innerHTML = `
+                <div>Video ${index + 1}: ${video.url.split('/').pop()}</div>
+                <div class="video-duration" id="duration-${index}">Loading duration...</div>
+            `;
+            
+            item.appendChild(info);
+            item.addEventListener('click', () => playVideo(index));
+            
+            return item;
+        }
+
+        // Function to update playlist item with duration
+        function updatePlaylistItem(index) {
+            const durationElement = document.getElementById(`duration-${index}`);
+            if (durationElement) {
+                const video = videos[index];
+                durationElement.textContent = video.duration 
+                    ? `Duration: ${formatDuration(video.duration)}`
+                    : 'Duration unavailable';
+            }
+        }
+
+        // Function to render playlist
+        function renderPlaylist() {
+            playlistDiv.innerHTML = '';
+            videos.forEach((video, index) => {
+                const item = createPlaylistItem(video, index);
+                playlistDiv.appendChild(item);
+            });
+            updateActivePlaylistItem();
+        }
+
+        // Function to update active playlist item
+        function updateActivePlaylistItem() {
+            const items = playlistDiv.querySelectorAll('.playlist-item');
+            items.forEach((item, index) => {
+                if (index === currentVideoIndex) {
+                    item.classList.add('active');
+                } else {
+                    item.classList.remove('active');
+                }
+            });
+        }
+
+        // Function to play a video
+        function playVideo(index) {
+            if (index < 0 || index >= videos.length) return;
+            
+            currentVideoIndex = index;
+            videoPlayer.src = videos[index].url;
+            videoPlayer.style.display = 'block';
+            videoPlayer.play();
+            updateActivePlaylistItem();
+            updateControls();
+        }
+
+        // Function to update control buttons
+        function updateControls() {
+            prevBtn.disabled = currentVideoIndex === 0;
+            nextBtn.disabled = currentVideoIndex === videos.length - 1;
+        }
+
+        // Function to play next video
+        function playNext() {
+            if (currentVideoIndex < videos.length - 1) {
+                playVideo(currentVideoIndex + 1);
+            }
+        }
+
+        // Function to play previous video
+        function playPrevious() {
+            if (currentVideoIndex > 0) {
+                playVideo(currentVideoIndex - 1);
+            }
+        }
+
+        // Event listeners
+        prevBtn.addEventListener('click', playPrevious);
+        nextBtn.addEventListener('click', playNext);
+        
+        // Auto-play next video when current one ends
+        videoPlayer.addEventListener('ended', () => {
+            if (currentVideoIndex < videos.length - 1) {
+                playNext();
+            }
+        });
+
+        // Main initialization function
+        async function initialize() {
+            try {
+                statusDiv.textContent = 'Fetching video manifest...';
+                
+                // Attempt to fetch the videos.json manifest with no-cache
+                const response = await fetch('/clips/videos.json', { cache: 'no-cache' });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch manifest: ${response.status} ${response.statusText}`);
+                }
+                
+                const videoUrls = await response.json();
+                
+                // Check if the response is an array with at least 4 videos
+                if (!Array.isArray(videoUrls)) {
+                    throw new Error('Manifest is not an array');
+                }
+                
+                if (videoUrls.length < 4) {
+                    throw new Error(`Manifest contains only ${videoUrls.length} video(s), minimum 4 required`);
+                }
+                
+                // Populate the videos array from the URLs
+                videos = videoUrls.map(url => ({ url, duration: null }));
+                
+                statusDiv.innerHTML = `<span class="success">Found ${videos.length} videos in manifest</span>`;
+                
+                // Render the playlist
+                renderPlaylist();
+                
+                // Show controls
+                controlsDiv.style.display = 'block';
+                
+                // Load video metadata (durations)
+                await loadVideoMetadata();
+                
+                // Optionally auto-play the first video
+                // playVideo(0);
+                
+            } catch (error) {
+                statusDiv.innerHTML = `<span class="error">Error: ${error.message}</span>`;
+                console.error('Initialization error:', error);
+            }
+        }
+
+        // Initialize on page load
+        window.addEventListener('load', initialize);
+    </script>
+</body>
+</html>
