@@ -1,0 +1,691 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BW2 Playa - Multi-Quad Video Cycler</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        #container {
+            width: 100vw;
+            height: 100vh;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+            gap: 0;
+        }
+        
+        .quad {
+            position: relative;
+            overflow: hidden;
+            background: #000;
+        }
+        
+        .quad video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.8);
+            font-size: 3rem;
+            font-weight: bold;
+            transition: opacity 0.3s;
+        }
+        
+        .overlay.hidden {
+            opacity: 0;
+            pointer-events: none;
+        }
+        
+        .controls {
+            position: fixed;
+            top: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 1000;
+            background: rgba(0, 0, 0, 0.9);
+            padding: 15px 25px;
+            border-radius: 12px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: center;
+            max-width: 90vw;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 14px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #4CAF50;
+            color: white;
+            font-weight: 500;
+            transition: background 0.2s;
+        }
+        
+        button:hover:not(:disabled) {
+            background: #45a049;
+        }
+        
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            opacity: 0.5;
+        }
+        
+        #btnStop {
+            background: #f44336;
+        }
+        
+        #btnStop:hover:not(:disabled) {
+            background: #da190b;
+        }
+        
+        #status {
+            font-size: 14px;
+            color: #aaa;
+            max-width: 600px;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        label[for="folderPicker"] {
+            padding: 10px 20px;
+            font-size: 14px;
+            border-radius: 6px;
+            cursor: pointer;
+            background: #2196F3;
+            color: white;
+            font-weight: 500;
+            transition: background 0.2s;
+            display: inline-block;
+        }
+        
+        label[for="folderPicker"]:hover {
+            background: #0b7dda;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div class="quad" id="quad0">
+            <video></video>
+            <div class="overlay">Q0</div>
+        </div>
+        <div class="quad" id="quad1">
+            <video></video>
+            <div class="overlay">Q1</div>
+        </div>
+        <div class="quad" id="quad2">
+            <video></video>
+            <div class="overlay">Q2</div>
+        </div>
+        <div class="quad" id="quad3">
+            <video></video>
+            <div class="overlay">Q3</div>
+        </div>
+    </div>
+    
+    <div class="controls">
+        <button id="btnStart" disabled>▶️ Start Cycle</button>
+        <button id="btnStop" disabled>⏹️ Stop</button>
+        <input type="file" id="folderPicker" multiple accept="video/*" webkitdirectory directory>
+        <label for="folderPicker">📁 Pick videos (fallback)</label>
+        <span id="status">Loading...</span>
+    </div>
+    
+    <script>
+    (function() {
+        'use strict';
+        
+        // Configuration constants
+        const MAX_SCHEDULE_DRIFT_MS = 10000; // 10 seconds
+        const FALLBACK_DURATION = 5; // Default duration if metadata fails
+        const METADATA_TIMEOUT_MS = 5000;
+        const PLAY_RETRY_ATTEMPTS = 3;
+        const PLAY_RETRY_BASE_DELAY = 100;
+        
+        // State
+        const STATES = {
+            IDLE: 'IDLE',
+            READY: 'READY',
+            RUNNING: 'RUNNING'
+        };
+        
+        let gameState = STATES.IDLE;
+        let cycleAbort = false;
+        let videos = []; // {url, duration}
+        let createdObjectURLs = new Set();
+        let activeIntervals = new Set();
+        let hiddenAt = null;
+        
+        const quads = [
+            { element: document.getElementById('quad0'), videoEl: null, overlay: null, nextTaskTimer: null, nextTargetTime: null, currentClipIndex: -1 },
+            { element: document.getElementById('quad1'), videoEl: null, overlay: null, nextTaskTimer: null, nextTargetTime: null, currentClipIndex: -1 },
+            { element: document.getElementById('quad2'), videoEl: null, overlay: null, nextTaskTimer: null, nextTargetTime: null, currentClipIndex: -1 },
+            { element: document.getElementById('quad3'), videoEl: null, overlay: null, nextTaskTimer: null, nextTargetTime: null, currentClipIndex: -1 }
+        ];
+        
+        const btnStart = document.getElementById('btnStart');
+        const btnStop = document.getElementById('btnStop');
+        const folderPicker = document.getElementById('folderPicker');
+        const status = document.getElementById('status');
+        
+        // Initialize quads
+        quads.forEach((q, i) => {
+            q.videoEl = q.element.querySelector('video');
+            q.overlay = q.element.querySelector('.overlay');
+        });
+        
+        // Timer helpers to track all timers in activeIntervals
+        const registerTimer = (id) => {
+            try {
+                activeIntervals.add(id);
+                return id;
+            } catch(e) {
+                console.error('registerTimer error:', e);
+            }
+            return id;
+        };
+        
+        const unregisterTimer = (id) => {
+            try {
+                clearTimeout(id);
+                clearInterval(id);
+                activeIntervals.delete(id);
+            } catch(e) {
+                console.error('unregisterTimer error:', e);
+            }
+        };
+        
+        // Helper: Random number in range
+        const random = (min = 0, max = 1000) => Math.floor(Math.random() * (max - min + 1)) + min;
+        
+        // Helper: Get random mid-start time for a clip
+        const randomMidStart = (clip) => {
+            if (!clip || !clip.duration || clip.duration <= 1) return 0;
+            const start = clip.duration * 0.2;
+            const end = clip.duration * 0.8;
+            return start + Math.random() * (end - start);
+        };
+        
+        // Helper: Set video source and start at random mid-point with retry logic
+        const setVideoSrcAtRandomStart = async (videoEl, clip, retryCount = 0) => {
+            return new Promise((resolve) => {
+                const attemptPlay = async () => {
+                    try {
+                        videoEl.src = clip.url;
+                        
+                        // Wait for metadata
+                        await new Promise((res, rej) => {
+                            const timeout = setTimeout(() => rej(new Error('Metadata timeout')), METADATA_TIMEOUT_MS);
+                            
+                            const onLoaded = () => {
+                                clearTimeout(timeout);
+                                videoEl.removeEventListener('loadedmetadata', onLoaded);
+                                videoEl.removeEventListener('error', onError);
+                                res();
+                            };
+                            
+                            const onError = (e) => {
+                                clearTimeout(timeout);
+                                videoEl.removeEventListener('loadedmetadata', onLoaded);
+                                videoEl.removeEventListener('error', onError);
+                                rej(e);
+                            };
+                            
+                            if (videoEl.readyState >= 1) {
+                                clearTimeout(timeout);
+                                res();
+                            } else {
+                                videoEl.addEventListener('loadedmetadata', onLoaded, { once: true });
+                                videoEl.addEventListener('error', onError, { once: true });
+                            }
+                        });
+                        
+                        // Seek to random mid-point
+                        try {
+                            const seekTime = randomMidStart(clip);
+                            videoEl.currentTime = seekTime;
+                        } catch(e) {
+                            console.warn('Failed to seek video:', e);
+                        }
+                        
+                        // Attempt to play
+                        const playPromise = videoEl.play();
+                        if (playPromise !== undefined) {
+                            await playPromise;
+                        }
+                        
+                        resolve(true);
+                    } catch(error) {
+                        console.warn(`setVideoSrcAtRandomStart play failed (attempt ${retryCount + 1}/${PLAY_RETRY_ATTEMPTS}):`, error);
+                        
+                        if (retryCount < PLAY_RETRY_ATTEMPTS - 1) {
+                            // Exponential backoff retry
+                            const delay = PLAY_RETRY_BASE_DELAY * Math.pow(2, retryCount);
+                            registerTimer(setTimeout(() => {
+                                setVideoSrcAtRandomStart(videoEl, clip, retryCount + 1).then(resolve);
+                            }, delay));
+                        } else {
+                            // Final failure: dispatch 'ended' event to continue cycling
+                            console.warn('All play attempts failed, dispatching ended event');
+                            registerTimer(setTimeout(() => {
+                                videoEl.dispatchEvent(new Event('ended'));
+                                resolve(false);
+                            }, 100));
+                        }
+                    }
+                };
+                
+                attemptPlay();
+            });
+        };
+        
+        // Helper: Schedule next task for a quad
+        const scheduleNextTask = (quadIndex, immediate = false) => {
+            const q = quads[quadIndex];
+            
+            if (cycleAbort || gameState !== STATES.RUNNING) {
+                return;
+            }
+            
+            if (q.nextTaskTimer) {
+                unregisterTimer(q.nextTaskTimer);
+                q.nextTaskTimer = null;
+            }
+            
+            const now = performance.now();
+            let delay = 0;
+            
+            if (!immediate && q.nextTargetTime) {
+                const drift = now - q.nextTargetTime;
+                if (drift > MAX_SCHEDULE_DRIFT_MS) {
+                    console.debug(`scheduleNextTask Q${quadIndex}: drift ${drift}ms > ${MAX_SCHEDULE_DRIFT_MS}ms, rescheduling immediately`);
+                    delay = random(100, 500);
+                } else {
+                    delay = Math.max(0, q.nextTargetTime - now);
+                }
+            } else {
+                delay = random(2000, 5000);
+            }
+            
+            q.nextTargetTime = now + delay;
+            
+            q.nextTaskTimer = registerTimer(setTimeout(() => {
+                if (cycleAbort || gameState !== STATES.RUNNING) {
+                    console.warn(`showCue blocked for Q${quadIndex}: gameState=${gameState}, cycleAbort=${cycleAbort}`);
+                    return;
+                }
+                
+                showCue(quadIndex);
+                q.nextTargetTime = performance.now() + random(3000, 7000);
+                scheduleNextTask(quadIndex, false);
+            }, delay));
+        };
+        
+        // Show cue overlay
+        const showCue = (quadIndex) => {
+            if (cycleAbort || gameState !== STATES.RUNNING) {
+                console.warn(`showCue blocked for Q${quadIndex}: gameState=${gameState}, cycleAbort=${cycleAbort}`);
+                return;
+            }
+            
+            const q = quads[quadIndex];
+            q.overlay.classList.remove('hidden');
+            
+            registerTimer(setTimeout(() => {
+                if (!cycleAbort && gameState === STATES.RUNNING) {
+                    q.overlay.classList.add('hidden');
+                }
+            }, random(1000, 2000)));
+        };
+        
+        // Start video cycling for a quad
+        const startVideoCycling = async (quadIndex) => {
+            const q = quads[quadIndex];
+            
+            // Select a random clip that's not being used by other quads
+            const availableIndices = [];
+            for (let i = 0; i < videos.length; i++) {
+                const inUse = quads.some((quad, idx) => idx !== quadIndex && quad.currentClipIndex === i);
+                if (!inUse) {
+                    availableIndices.push(i);
+                }
+            }
+            
+            if (availableIndices.length === 0) {
+                console.debug(`startVideoCycling Q${quadIndex}: no available clips (all in use)`);
+                // Use any clip as fallback
+                q.currentClipIndex = random(0, videos.length - 1);
+            } else {
+                q.currentClipIndex = availableIndices[random(0, availableIndices.length - 1)];
+            }
+            
+            const clip = videos[q.currentClipIndex];
+            await setVideoSrcAtRandomStart(q.videoEl, clip);
+            
+            // Set up ended handler to cycle to next clip
+            const onEnded = () => {
+                if (cycleAbort || gameState !== STATES.RUNNING) {
+                    return;
+                }
+                
+                // Find next available clip
+                const availableIndices = [];
+                for (let i = 0; i < videos.length; i++) {
+                    const inUse = quads.some((quad, idx) => idx !== quadIndex && quad.currentClipIndex === i);
+                    if (!inUse) {
+                        availableIndices.push(i);
+                    }
+                }
+                
+                if (availableIndices.length === 0) {
+                    console.debug(`startVideoCycling Q${quadIndex} onEnded: no available clips, using any`);
+                    q.currentClipIndex = random(0, videos.length - 1);
+                } else {
+                    q.currentClipIndex = availableIndices[random(0, availableIndices.length - 1)];
+                }
+                
+                const nextClip = videos[q.currentClipIndex];
+                setVideoSrcAtRandomStart(q.videoEl, nextClip);
+            };
+            
+            q.videoEl.addEventListener('ended', onEnded);
+        };
+        
+        // Stop all loops and clean up
+        const stopAllLoops = () => {
+            cycleAbort = true;
+            gameState = STATES.IDLE;
+            
+            // Clear all registered timers
+            activeIntervals.forEach(id => {
+                clearTimeout(id);
+                clearInterval(id);
+            });
+            activeIntervals.clear();
+            
+            quads.forEach(q => {
+                if (q.nextTaskTimer) {
+                    q.nextTaskTimer = null;
+                }
+                q.nextTargetTime = null;
+                q.currentClipIndex = -1;
+                
+                // Stop video
+                if (q.videoEl) {
+                    q.videoEl.pause();
+                    q.videoEl.src = '';
+                }
+                
+                // Show overlay
+                q.overlay.classList.remove('hidden');
+            });
+            
+            // Revoke object URLs if they were created from file picker
+            createdObjectURLs.forEach(url => {
+                try {
+                    URL.revokeObjectURL(url);
+                } catch(e) {
+                    console.error('Failed to revoke URL:', e);
+                }
+            });
+            createdObjectURLs.clear();
+            
+            btnStart.disabled = videos.length < 4;
+            btnStop.disabled = true;
+        };
+        
+        // Start cycle
+        const startCycle = async () => {
+            if (gameState !== STATES.IDLE || videos.length < 4) {
+                return;
+            }
+            
+            cycleAbort = false;
+            gameState = STATES.READY;
+            
+            btnStart.disabled = true;
+            btnStop.disabled = false;
+            
+            // Small ready window
+            await new Promise(resolve => setTimeout(resolve, 100));
+            
+            gameState = STATES.RUNNING;
+            
+            // Start video cycling on all quads
+            quads.forEach((q, i) => {
+                startVideoCycling(i);
+                scheduleNextTask(i, false);
+            });
+        };
+        
+        // Load manifest videos from /clips/videos.json
+        const loadManifestVideos = async () => {
+            try {
+                status.textContent = 'Loading manifest...';
+                
+                const response = await fetch('/clips/videos.json', { cache: 'no-cache' });
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const urls = await response.json();
+                
+                if (!Array.isArray(urls) || urls.length < 4) {
+                    throw new Error(`Manifest contains ${urls?.length || 0} clips, need at least 4`);
+                }
+                
+                status.textContent = `Loading ${urls.length} videos metadata...`;
+                
+                // Load metadata for all clips
+                const results = await Promise.allSettled(
+                    urls.map(async (url) => {
+                        return new Promise((resolve, reject) => {
+                            const video = document.createElement('video');
+                            const timeout = setTimeout(() => {
+                                cleanup();
+                                resolve({ url, duration: FALLBACK_DURATION });
+                            }, METADATA_TIMEOUT_MS);
+                            
+                            const cleanup = () => {
+                                clearTimeout(timeout);
+                                video.removeEventListener('loadedmetadata', onLoaded);
+                                video.removeEventListener('error', onError);
+                                video.src = '';
+                            };
+                            
+                            const onLoaded = () => {
+                                const duration = video.duration || FALLBACK_DURATION;
+                                cleanup();
+                                resolve({ url, duration });
+                            };
+                            
+                            const onError = (e) => {
+                                cleanup();
+                                console.warn(`Failed to load metadata for ${url}:`, e);
+                                resolve({ url, duration: FALLBACK_DURATION });
+                            };
+                            
+                            video.addEventListener('loadedmetadata', onLoaded);
+                            video.addEventListener('error', onError);
+                            video.src = url;
+                        });
+                    })
+                );
+                
+                videos = results
+                    .filter(r => r.status === 'fulfilled')
+                    .map(r => r.value);
+                
+                if (videos.length >= 4) {
+                    status.textContent = `✅ Loaded ${videos.length} videos from /clips/videos.json`;
+                    status.style.color = '#4CAF50';
+                    btnStart.disabled = false;
+                    return true;
+                } else {
+                    throw new Error(`Only ${videos.length} clips loaded successfully, need at least 4`);
+                }
+            } catch(error) {
+                console.warn('Manifest load failed:', error);
+                status.textContent = '⚠️ Manifest unavailable. Add /clips/videos.json with ≥4 video paths (e.g. ["/clips/clip1.mp4", ...]) or use "Pick videos" below.';
+                status.style.color = '#ff9800';
+                return false;
+            }
+        };
+        
+        // Handle file picker (fallback)
+        const handleFilePickerChange = async (event) => {
+            const files = Array.from(event.target.files).filter(f => f.type.startsWith('video/'));
+            
+            if (files.length < 4) {
+                status.textContent = `❌ Need at least 4 video files, got ${files.length}`;
+                status.style.color = '#f44336';
+                return;
+            }
+            
+            status.textContent = `Loading ${files.length} local videos...`;
+            
+            // Revoke old URLs
+            createdObjectURLs.forEach(url => {
+                try {
+                    URL.revokeObjectURL(url);
+                } catch(e) {}
+            });
+            createdObjectURLs.clear();
+            
+            // Create object URLs and load metadata
+            const results = await Promise.allSettled(
+                files.map(async (file) => {
+                    return new Promise((resolve) => {
+                        const url = URL.createObjectURL(file);
+                        createdObjectURLs.add(url);
+                        
+                        const video = document.createElement('video');
+                        const timeout = setTimeout(() => {
+                            cleanup();
+                            resolve({ url, duration: FALLBACK_DURATION });
+                        }, METADATA_TIMEOUT_MS);
+                        
+                        const cleanup = () => {
+                            clearTimeout(timeout);
+                            video.removeEventListener('loadedmetadata', onLoaded);
+                            video.removeEventListener('error', onError);
+                            video.src = '';
+                        };
+                        
+                        const onLoaded = () => {
+                            const duration = video.duration || FALLBACK_DURATION;
+                            cleanup();
+                            resolve({ url, duration });
+                        };
+                        
+                        const onError = (e) => {
+                            cleanup();
+                            console.warn(`Failed to load metadata for ${file.name}:`, e);
+                            resolve({ url, duration: FALLBACK_DURATION });
+                        };
+                        
+                        video.addEventListener('loadedmetadata', onLoaded);
+                        video.addEventListener('error', onError);
+                        video.src = url;
+                    });
+                })
+            );
+            
+            videos = results
+                .filter(r => r.status === 'fulfilled')
+                .map(r => r.value);
+            
+            status.textContent = `✅ Loaded ${videos.length} local clips`;
+            status.style.color = '#4CAF50';
+            btnStart.disabled = false;
+        };
+        
+        // Visibility change handler for tab switching
+        document.addEventListener('visibilitychange', () => {
+            if (gameState !== STATES.RUNNING) {
+                return;
+            }
+            
+            if (document.hidden) {
+                hiddenAt = performance.now();
+                
+                // Clear all task timers but keep target times
+                quads.forEach(q => {
+                    if (q.nextTaskTimer) {
+                        unregisterTimer(q.nextTaskTimer);
+                        q.nextTaskTimer = null;
+                    }
+                });
+            } else {
+                // Page became visible again
+                const now = performance.now();
+                const hiddenMs = hiddenAt ? (now - hiddenAt) : 0;
+                hiddenAt = null;
+                
+                // Reschedule all quads
+                quads.forEach((q, i) => {
+                    if (q.nextTargetTime) {
+                        const drift = now - q.nextTargetTime + hiddenMs;
+                        if (drift > MAX_SCHEDULE_DRIFT_MS) {
+                            console.debug(`Visibility restored Q${i}: drift ${drift}ms, rescheduling immediately`);
+                            scheduleNextTask(i, true);
+                        } else {
+                            q.nextTargetTime += hiddenMs;
+                            scheduleNextTask(i, false);
+                        }
+                    } else {
+                        scheduleNextTask(i, true);
+                    }
+                });
+            }
+        });
+        
+        // Event listeners
+        btnStart.addEventListener('click', startCycle);
+        btnStop.addEventListener('click', stopAllLoops);
+        folderPicker.addEventListener('change', handleFilePickerChange);
+        
+        // Initialize
+        (async () => {
+            const manifestLoaded = await loadManifestVideos();
+            
+            if (!manifestLoaded) {
+                // Manifest not available, file picker is the fallback
+                btnStart.disabled = true;
+            }
+        })();
+    })();
+    </script>
+</body>
+</html>
