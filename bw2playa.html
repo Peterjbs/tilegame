@@ -1,0 +1,846 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BW2 Playa - Multi-Quad Video Cycler</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: Arial, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        
+        .controls {
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        
+        button {
+            padding: 10px 20px;
+            font-size: 1em;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        #btnStart {
+            background: #4CAF50;
+            color: white;
+        }
+        
+        #btnStop {
+            background: #f44336;
+            color: white;
+        }
+        
+        .btn-upload {
+            background: #2196F3;
+            color: white;
+        }
+        
+        #choose-tint {
+            background: #FF9800;
+            color: white;
+            display: none;
+        }
+        
+        input[type="file"] {
+            display: none;
+        }
+        
+        .video-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        
+        .quad {
+            position: relative;
+            background: #000;
+            border: 2px solid #333;
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 16 / 9;
+        }
+        
+        .quad video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        
+        .quad-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.7);
+            font-size: 1.5em;
+            pointer-events: none;
+        }
+        
+        .quad-overlay.hidden {
+            display: none;
+        }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        
+        .status-item {
+            display: inline-block;
+            margin: 0 15px;
+        }
+        
+        .file-info {
+            text-align: center;
+            padding: 10px;
+            background: #2a2a2a;
+            border-radius: 5px;
+            margin-bottom: 10px;
+            font-size: 0.9em;
+        }
+        
+        @media (max-width: 768px) {
+            .video-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>🎬 BW2 Playa - Multi-Quad Video Cycler</h1>
+        </header>
+        
+        <div class="controls">
+            <label for="fileInput" class="btn-upload" style="display: inline-block; padding: 10px 20px; border-radius: 5px; cursor: pointer;">
+                📁 Pick videos (fallback)
+            </label>
+            <input type="file" id="fileInput" multiple accept="video/*">
+            <button id="btnStart" disabled>▶️ Start Cycle</button>
+            <button id="btnStop" disabled>⏹️ Stop</button>
+            <button id="choose-tint">🎨 Choose Tint</button>
+        </div>
+        
+        <div class="file-info" id="fileInfo">
+            Attempting to load clips from repository manifest... To use repository clips, commit a JSON manifest at /clips/videos.json with an array of relative paths (e.g. ["/clips/clip1.mp4", "/clips/clip2.mp4"]). Otherwise use 'Pick videos' to load local files.
+        </div>
+        
+        <div class="status" id="status">
+            <span class="status-item">State: <strong id="stateDisplay">IDLE</strong></span>
+            <span class="status-item">Loaded Clips: <strong id="clipCount">0</strong></span>
+        </div>
+        
+        <div class="video-grid">
+            <div class="quad" id="quad0">
+                <video muted></video>
+                <div class="quad-overlay">Quad 0</div>
+            </div>
+            <div class="quad" id="quad1">
+                <video muted></video>
+                <div class="quad-overlay">Quad 1</div>
+            </div>
+            <div class="quad" id="quad2">
+                <video muted></video>
+                <div class="quad-overlay">Quad 2</div>
+            </div>
+            <div class="quad" id="quad3">
+                <video muted></video>
+                <div class="quad-overlay">Quad 3</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+    (function() {
+        'use strict';
+        
+        // ===== Constants =====
+        const STATES = {
+            IDLE: 'IDLE',
+            READY: 'READY',
+            RUNNING: 'RUNNING',
+            STOPPED: 'STOPPED'
+        };
+        
+        const MAX_SCHEDULE_DRIFT_MS = 10000; // 10 seconds max drift tolerance
+        const NUM_QUADS = 4;
+        const MIN_CLIPS_REQUIRED = 4;
+        const READY_WAIT_MS = 100; // Small wait before transitioning to RUNNING
+        const MIN_TASK_DELAY_MS = 1000; // Minimum delay for task scheduling
+        const MAX_TASK_DELAY_MS = 5000; // Maximum random delay for task scheduling
+        const TASK_INTERVAL_MS = 3000; // Base interval between tasks
+        const OVERLAY_HIDE_DELAY_MS = 2000; // Auto-hide overlay after this duration
+        const BASE_BACKOFF_DELAY_MS = 100; // Base delay for video playback retry backoff
+        const CLIP_RETRY_DELAY_MS = 100; // Delay before retrying clip selection
+        
+        // ===== Global State =====
+        let gameState = STATES.IDLE;
+        let cycleAbort = false;
+        let videoClips = [];
+        let createdObjectURLs = [];
+        let activeIntervals = new Set();
+        let quads = [];
+        let hiddenAt = null;
+        
+        // ===== DOM Elements =====
+        const fileInput = document.getElementById('fileInput');
+        const btnStart = document.getElementById('btnStart');
+        const btnStop = document.getElementById('btnStop');
+        const chooseTint = document.getElementById('choose-tint');
+        const fileInfo = document.getElementById('fileInfo');
+        const stateDisplay = document.getElementById('stateDisplay');
+        const clipCount = document.getElementById('clipCount');
+        
+        // ===== Helper Functions =====
+        
+        /**
+         * Register a timer ID for tracking and cleanup
+         * @param {number} id - setTimeout or setInterval ID
+         * @returns {number} The same ID for chaining
+         */
+        const registerTimer = (id) => {
+            try {
+                activeIntervals.add(id);
+                return id;
+            } catch(e) {
+                console.error('Error registering timer:', e);
+            }
+            return id;
+        };
+        
+        /**
+         * Unregister and clear a timer
+         * @param {number} id - Timer ID to clear
+         */
+        const unregisterTimer = (id) => {
+            try {
+                clearTimeout(id);
+                clearInterval(id);
+                activeIntervals.delete(id);
+            } catch(e) {
+                console.error('Error unregistering timer:', e);
+            }
+        };
+        
+        /**
+         * Get a random mid-start time for a video clip
+         * @param {Object} clip - Video clip object with duration
+         * @returns {number} Random time between 0.1 and (duration - 0.5)
+         */
+        function randomMidStart(clip) {
+            if (!clip || !clip.duration || clip.duration < 1) {
+                return 0;
+            }
+            const maxStart = Math.max(0.1, clip.duration - 0.5);
+            return Math.random() * maxStart;
+        }
+        
+        /**
+         * Set video source and seek to random mid-point with robust error handling
+         * @param {HTMLVideoElement} v - Video element
+         * @param {Object} clip - Clip object with url and duration
+         * @returns {Promise<void>}
+         */
+        async function setVideoSrcAtRandomStart(v, clip) {
+            return new Promise((resolve, reject) => {
+                let metadataLoaded = false;
+                let attemptCount = 0;
+                const MAX_ATTEMPTS = 3;
+                
+                const onMetadataLoaded = async () => {
+                    if (metadataLoaded) return;
+                    metadataLoaded = true;
+                    v.removeEventListener('loadedmetadata', onMetadataLoaded);
+                    
+                    try {
+                        // Set random start position
+                        const startTime = randomMidStart(clip);
+                        console.debug(`Setting video to start at ${startTime.toFixed(2)}s`);
+                        v.currentTime = startTime;
+                        
+                        // Attempt to play
+                        await v.play();
+                        resolve();
+                    } catch (playError) {
+                        console.warn('Video play failed:', playError);
+                        
+                        // Backoff and retry or dispatch ended event
+                        if (attemptCount < MAX_ATTEMPTS) {
+                            attemptCount++;
+                            const backoffDelay = BASE_BACKOFF_DELAY_MS * attemptCount;
+                            registerTimer(setTimeout(async () => {
+                                try {
+                                    await v.play();
+                                    resolve();
+                                } catch (retryError) {
+                                    console.warn('Video play retry failed:', retryError);
+                                    // Dispatch ended to trigger next clip
+                                    v.dispatchEvent(new Event('ended'));
+                                    reject(retryError);
+                                }
+                            }, backoffDelay));
+                        } else {
+                            // Give up and dispatch ended
+                            v.dispatchEvent(new Event('ended'));
+                            reject(playError);
+                        }
+                    }
+                };
+                
+                const onError = (err) => {
+                    console.error('Video load error:', err);
+                    v.removeEventListener('loadedmetadata', onMetadataLoaded);
+                    v.removeEventListener('error', onError);
+                    reject(err);
+                };
+                
+                v.addEventListener('loadedmetadata', onMetadataLoaded, { once: true });
+                v.addEventListener('error', onError, { once: true });
+                
+                // Set the source
+                v.src = clip.url;
+                v.load();
+            });
+        }
+        
+        /**
+         * Display a cue/overlay on a quad
+         * @param {number} qi - Quad index
+         * @param {string} message - Message to display
+         */
+        function showCue(qi, message) {
+            // Check if we should block showing cue
+            if (gameState !== STATES.RUNNING || cycleAbort) {
+                console.warn(`showCue blocked for quad ${qi}: gameState=${gameState}, cycleAbort=${cycleAbort}`);
+                return;
+            }
+            
+            const quad = quads[qi];
+            if (!quad || !quad.overlay) return;
+            
+            quad.overlay.textContent = message;
+            quad.overlay.classList.remove('hidden');
+            
+            // Auto-hide after a short time
+            registerTimer(setTimeout(() => {
+                if (quad.overlay) {
+                    quad.overlay.classList.add('hidden');
+                }
+            }, OVERLAY_HIDE_DELAY_MS));
+        }
+        
+        /**
+         * Schedule next task for a quad with drift detection
+         * @param {number} qi - Quad index
+         * @param {boolean} immediate - If true, schedule immediately
+         */
+        function scheduleNextTask(qi, immediate = false) {
+            const q = quads[qi];
+            if (!q) return;
+            
+            // Clear existing timer
+            if (q.nextTaskTimer) {
+                unregisterTimer(q.nextTaskTimer);
+                q.nextTaskTimer = null;
+            }
+            
+            const now = performance.now();
+            let delay;
+            
+            if (immediate) {
+                delay = 0;
+            } else {
+                // Calculate delay based on target time
+                if (!q.nextTargetTime) {
+                    // First schedule - random delay 1-5 seconds
+                    delay = MIN_TASK_DELAY_MS + Math.random() * (MAX_TASK_DELAY_MS - MIN_TASK_DELAY_MS);
+                    q.nextTargetTime = now + delay;
+                } else {
+                    delay = Math.max(0, q.nextTargetTime - now);
+                    
+                    // Check for drift
+                    const drift = Math.abs(delay);
+                    if (drift > MAX_SCHEDULE_DRIFT_MS) {
+                        console.debug(`Large drift detected for quad ${qi}: ${drift.toFixed(0)}ms, rescheduling`);
+                        // Reschedule with fresh target
+                        delay = MIN_TASK_DELAY_MS + Math.random() * (MAX_TASK_DELAY_MS - MIN_TASK_DELAY_MS);
+                        q.nextTargetTime = now + delay;
+                    }
+                }
+            }
+            
+            // Schedule the task
+            q.nextTaskTimer = registerTimer(setTimeout(() => {
+                if (cycleAbort || gameState !== STATES.RUNNING) return;
+                
+                // Execute task (show a cue as example)
+                showCue(qi, `Task ${qi}`);
+                
+                // Schedule next
+                q.nextTargetTime = performance.now() + TASK_INTERVAL_MS + Math.random() * (MAX_TASK_DELAY_MS - MIN_TASK_DELAY_MS);
+                scheduleNextTask(qi, false);
+            }, delay));
+        }
+        
+        /**
+         * Start video cycling for a specific quad
+         * @param {number} qi - Quad index
+         */
+        function startVideoCycling(qi) {
+            const q = quads[qi];
+            if (!q || !q.video) return;
+            
+            const usedIndices = new Set();
+            
+            const playNext = async () => {
+                if (cycleAbort || gameState !== STATES.RUNNING) {
+                    console.debug(`Video cycling stopped for quad ${qi}`);
+                    return;
+                }
+                
+                // Find next available clip
+                let clipIndex;
+                let attempts = 0;
+                do {
+                    clipIndex = Math.floor(Math.random() * videoClips.length);
+                    attempts++;
+                    if (attempts > videoClips.length * 2) {
+                        // Reset used indices if we've tried too many times
+                        usedIndices.clear();
+                        break;
+                    }
+                } while (usedIndices.has(clipIndex) && usedIndices.size < videoClips.length);
+                
+                // Check if this clip is being used by another quad
+                const clipInUse = quads.some((otherQ, idx) => 
+                    idx !== qi && otherQ.currentClipIndex === clipIndex
+                );
+                
+                if (clipInUse) {
+                    console.debug(`Quad ${qi}: Skipping clip ${clipIndex} (in use by another quad)`);
+                    // Try another clip immediately
+                    registerTimer(setTimeout(playNext, CLIP_RETRY_DELAY_MS));
+                    return;
+                }
+                
+                usedIndices.add(clipIndex);
+                q.currentClipIndex = clipIndex;
+                
+                const clip = videoClips[clipIndex];
+                console.debug(`Quad ${qi}: Playing clip ${clipIndex}`);
+                
+                try {
+                    await setVideoSrcAtRandomStart(q.video, clip);
+                } catch (err) {
+                    console.error(`Quad ${qi}: Failed to start video:`, err);
+                    // playNext will be called by 'ended' event
+                }
+            };
+            
+            // Set up ended event listener
+            q.video.addEventListener('ended', playNext);
+            
+            // Start first video
+            playNext();
+        }
+        
+        /**
+         * Start the cycle
+         */
+        async function startCycle() {
+            if (gameState === STATES.RUNNING) {
+                console.warn('Cycle already running');
+                return;
+            }
+            
+            console.log('Starting cycle...');
+            cycleAbort = false;
+            gameState = STATES.READY;
+            updateUI();
+            
+            // Small readiness wait before transitioning to RUNNING
+            await new Promise(resolve => setTimeout(resolve, READY_WAIT_MS));
+            
+            // Now transition to RUNNING (prevents choose-tint from appearing mid-game)
+            gameState = STATES.RUNNING;
+            updateUI();
+            
+            // Hide all overlays
+            quads.forEach(q => {
+                if (q.overlay) {
+                    q.overlay.classList.add('hidden');
+                }
+            });
+            
+            // Start video cycling for each quad
+            quads.forEach((q, i) => {
+                startVideoCycling(i);
+                scheduleNextTask(i, false);
+            });
+            
+            console.log('Cycle started');
+        }
+        
+        /**
+         * Stop all loops and clean up
+         */
+        function stopAllLoops() {
+            console.log('Stopping all loops...');
+            cycleAbort = true;
+            gameState = STATES.STOPPED;
+            
+            // Clear all registered timers
+            activeIntervals.forEach(id => {
+                unregisterTimer(id);
+            });
+            activeIntervals.clear();
+            
+            // Stop all videos
+            quads.forEach(q => {
+                if (q.video) {
+                    q.video.pause();
+                    q.video.src = '';
+                    q.video.load();
+                }
+                if (q.overlay) {
+                    q.overlay.classList.remove('hidden');
+                }
+                q.nextTaskTimer = null;
+                q.nextTargetTime = null;
+                q.currentClipIndex = null;
+            });
+            
+            // Revoke object URLs
+            createdObjectURLs.forEach(url => {
+                try {
+                    URL.revokeObjectURL(url);
+                } catch (e) {
+                    console.error('Error revoking URL:', e);
+                }
+            });
+            createdObjectURLs = [];
+            
+            updateUI();
+            console.log('All loops stopped');
+        }
+        
+        /**
+         * Update UI based on current state
+         */
+        function updateUI() {
+            stateDisplay.textContent = gameState;
+            clipCount.textContent = videoClips.length;
+            
+            const hasEnoughClips = videoClips.length >= MIN_CLIPS_REQUIRED;
+            
+            switch (gameState) {
+                case STATES.IDLE:
+                    btnStart.disabled = !hasEnoughClips;
+                    btnStop.disabled = true;
+                    chooseTint.style.display = 'none';
+                    break;
+                case STATES.READY:
+                    btnStart.disabled = true;
+                    btnStop.disabled = false;
+                    chooseTint.style.display = 'none';
+                    break;
+                case STATES.RUNNING:
+                    btnStart.disabled = true;
+                    btnStop.disabled = false;
+                    chooseTint.style.display = 'none';
+                    break;
+                case STATES.STOPPED:
+                    btnStart.disabled = !hasEnoughClips;
+                    btnStop.disabled = true;
+                    chooseTint.style.display = 'none';
+                    gameState = STATES.IDLE; // Reset to idle
+                    break;
+            }
+        }
+        
+        /**
+         * Handle visibility change events
+         */
+        function handleVisibilityChange() {
+            if (document.hidden) {
+                // Page hidden - record time and pause timers
+                hiddenAt = performance.now();
+                console.debug('Page hidden, pausing timers');
+                
+                // Clear scheduled timers but keep target times
+                quads.forEach(q => {
+                    if (q.nextTaskTimer) {
+                        unregisterTimer(q.nextTaskTimer);
+                        q.nextTaskTimer = null;
+                    }
+                });
+            } else {
+                // Page visible again - resume timers
+                if (hiddenAt !== null) {
+                    const hiddenMs = performance.now() - hiddenAt;
+                    console.debug(`Page visible again after ${hiddenMs.toFixed(0)}ms`);
+                    
+                    if (gameState === STATES.RUNNING) {
+                        // Reschedule tasks for each quad
+                        quads.forEach((q, i) => {
+                            if (q.nextTargetTime) {
+                                const drift = performance.now() - q.nextTargetTime + hiddenMs;
+                                
+                                if (drift > MAX_SCHEDULE_DRIFT_MS) {
+                                    // Too much drift, reschedule immediately with fresh target
+                                    console.debug(`Quad ${i}: Large drift after wake (${drift.toFixed(0)}ms), rescheduling`);
+                                    scheduleNextTask(i, true);
+                                } else {
+                                    // Shift target forward by hidden duration
+                                    q.nextTargetTime += hiddenMs;
+                                    scheduleNextTask(i, false);
+                                }
+                            } else {
+                                // No target time, schedule fresh
+                                scheduleNextTask(i, true);
+                            }
+                        });
+                    }
+                    
+                    hiddenAt = null;
+                }
+            }
+        }
+        
+        /**
+         * Load video files
+         */
+        function loadVideoFiles(files) {
+            // Clean up old URLs
+            createdObjectURLs.forEach(url => URL.revokeObjectURL(url));
+            createdObjectURLs = [];
+            videoClips = [];
+            
+            if (files.length < MIN_CLIPS_REQUIRED) {
+                fileInfo.textContent = `Please select at least ${MIN_CLIPS_REQUIRED} video files. Currently selected: ${files.length}`;
+                fileInfo.style.color = '#ff6b6b';
+                updateUI();
+                return;
+            }
+            
+            fileInfo.textContent = `Loading ${files.length} video clips...`;
+            fileInfo.style.color = '#fff';
+            
+            let loadedCount = 0;
+            
+            Array.from(files).forEach((file, index) => {
+                const url = URL.createObjectURL(file);
+                createdObjectURLs.push(url);
+                
+                // Create temporary video to get duration
+                const tempVideo = document.createElement('video');
+                tempVideo.addEventListener('loadedmetadata', () => {
+                    const clip = {
+                        url: url,
+                        duration: tempVideo.duration,
+                        name: file.name
+                    };
+                    videoClips.push(clip);
+                    loadedCount++;
+                    
+                    if (loadedCount === files.length) {
+                        fileInfo.textContent = `✅ Loaded ${videoClips.length} clips successfully`;
+                        fileInfo.style.color = '#4CAF50';
+                        updateUI();
+                    }
+                    
+                    // Clean up temp video
+                    tempVideo.src = '';
+                }, { once: true });
+                
+                tempVideo.src = url;
+            });
+        }
+        
+        /**
+         * Load videos from repository manifest at /clips/videos.json
+         * @returns {Promise<boolean>} True if manifest loaded successfully
+         */
+        async function loadManifestVideos() {
+            try {
+                fileInfo.textContent = 'Attempting to load clips from repository manifest...';
+                fileInfo.style.color = '#fff';
+                
+                const response = await fetch('/clips/videos.json', {
+                    cache: 'no-cache'
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`Failed to fetch manifest: ${response.status}`);
+                }
+                
+                const manifestUrls = await response.json();
+                
+                if (!Array.isArray(manifestUrls)) {
+                    throw new Error('Manifest must be an array of video URLs');
+                }
+                
+                if (manifestUrls.length < MIN_CLIPS_REQUIRED) {
+                    throw new Error(`Manifest contains ${manifestUrls.length} clips, need at least ${MIN_CLIPS_REQUIRED}`);
+                }
+                
+                // Load metadata for all videos
+                videoClips = [];
+                let loadedCount = 0;
+                const loadPromises = [];
+                
+                manifestUrls.forEach((url) => {
+                    const promise = new Promise((resolve, reject) => {
+                        const tempVideo = document.createElement('video');
+                        
+                        tempVideo.addEventListener('loadedmetadata', () => {
+                            const clip = {
+                                url: url,
+                                duration: tempVideo.duration,
+                                name: url.split('/').pop()
+                            };
+                            videoClips.push(clip);
+                            loadedCount++;
+                            
+                            // Clean up temp video
+                            tempVideo.src = '';
+                            resolve(clip);
+                        }, { once: true });
+                        
+                        tempVideo.addEventListener('error', (err) => {
+                            console.warn(`Failed to load video metadata for ${url}:`, err);
+                            tempVideo.src = '';
+                            reject(err);
+                        }, { once: true });
+                        
+                        tempVideo.src = url;
+                    });
+                    
+                    loadPromises.push(promise);
+                });
+                
+                // Wait for all videos to load
+                const results = await Promise.allSettled(loadPromises);
+                const successCount = results.filter(r => r.status === 'fulfilled').length;
+                
+                if (successCount < MIN_CLIPS_REQUIRED) {
+                    videoClips = [];
+                    throw new Error(`Only ${successCount} clips loaded successfully, need at least ${MIN_CLIPS_REQUIRED}`);
+                }
+                
+                // Success!
+                fileInfo.textContent = `✅ Loaded ${videoClips.length} videos from /clips/videos.json`;
+                fileInfo.style.color = '#4CAF50';
+                updateUI();
+                return true;
+                
+            } catch (error) {
+                console.warn('Failed to load manifest:', error.message);
+                videoClips = [];
+                fileInfo.textContent = 'To use repository clips, commit a JSON manifest at /clips/videos.json with an array of relative paths (e.g. ["/clips/clip1.mp4", "/clips/clip2.mp4"]). Otherwise use \'Pick videos\' to load local files.';
+                fileInfo.style.color = '#ff9800';
+                updateUI();
+                return false;
+            }
+        }
+        
+        // ===== Initialize =====
+        
+        async function init() {
+            // Initialize quad objects
+            for (let i = 0; i < NUM_QUADS; i++) {
+                const quadEl = document.getElementById(`quad${i}`);
+                const video = quadEl.querySelector('video');
+                const overlay = quadEl.querySelector('.quad-overlay');
+                
+                quads.push({
+                    element: quadEl,
+                    video: video,
+                    overlay: overlay,
+                    nextTaskTimer: null,
+                    nextTargetTime: null,
+                    currentClipIndex: null
+                });
+            }
+            
+            // Event listeners
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length > 0) {
+                    loadVideoFiles(e.target.files);
+                }
+            });
+            
+            btnStart.addEventListener('click', startCycle);
+            btnStop.addEventListener('click', stopAllLoops);
+            
+            // Visibility change handler
+            document.addEventListener('visibilitychange', handleVisibilityChange);
+            
+            updateUI();
+            
+            // Try to load videos from manifest
+            await loadManifestVideos();
+            
+            console.log('BW2 Playa initialized');
+        }
+        
+        // Start on DOM ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    })();
+    </script>
+</body>
+</html>
